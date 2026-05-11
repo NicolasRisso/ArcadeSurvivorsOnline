@@ -28,12 +28,22 @@ typedef enum EntityType : u8 {
     ENTITY_CHARACTER = 1
 } EntityType;
 
+typedef enum CharacterType : u8 {
+    CHARACTER_UNDEFINED = 0,
+    CHARACTER_PLAYER = 1,
+    CHARACTER_ENEMY = 2
+} CharacterType;
+
 //~ Begin of Structs
-typedef struct Entity{
-    u32 identification;
-    EntityType entityType;
+typedef struct Character{
+    CharacterType characterType;
     Vector2 position;
     Vector2 velocity;
+} Character;
+
+typedef struct Entity{
+    EntityType entityType;
+    union { Character character; };
 } Entity;
 
 //~ Global Definitions
@@ -42,6 +52,8 @@ typedef struct GlobalVariables{
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
+
+void Enemy_UpdateMovement(f32 deltaTime);
 
 //~ Begin of Player
 void Player_UpdateMovement(f32 deltaTime);

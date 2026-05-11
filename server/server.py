@@ -16,35 +16,52 @@ PACKET_HEARTBEAT = 2
 PACKET_HEARTBEAT_ACK = 3
 PACKET_VELOCITY_UPDATE = 4
 PACKET_WORLD_STATE = 5
+PACKET_ENTITY_SPAWN = 6
+PACKET_ENTITY_SNAPSHOT = 7
+
+# Entity Types
+ENTITY_UNDEFINED = 0
+ENTITY_CHARACTER = 1
+
+# Character Types
+CHARACTER_UNDEFINED = 0
+CHARACTER_PLAYER = 1
+CHARACTER_ENEMY = 2
 
 # Struct Formats (Little Endian, Packed)
-# Header: type (B), playerIdentification (I), timestamp (d)
 HEADER_FORMAT = "<BId"
-# ID Response: Header only
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
-# Velocity Update: Header + velocity_x (f), velocity_y (f)
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
-# World State: Header + count (I)
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
-# Player State in World State: identification (I), velocity_x (f), velocity_y (f)
 PLAYER_STATE_FORMAT = "Iff"
+
+# Entity Spawn: Header + index (I) + entityType (B) + charType (B) + pos_x (f) + pos_y (f)
+ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBff"
+# Entity Snapshot Header: Header + count (I)
+ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "I"
+# Single Snapshot: index (I) + pos_x (f) + pos_y (f)
+SINGLE_SNAPSHOT_FORMAT = "Iff"
 
 class Server:
     def __init__(self):
         self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.serverSocket.bind((SERVER_IP, SERVER_PORT))
         self.serverSocket.setblocking(False)
-        self.players = {} # (address): {identification, x, y, velocity_x, velocity_y, lastHeartbeatReceived}
+        self.players = {} # (address): {identification, position_x, position_y, ...}
+        self.entities = {} # {index}: {type, charType, position_x, position_y, velocity_x, velocity_y}
         self.nextPlayerIdentification = 1
+        self.nextEntityIndex = 100 # Reserves 0-99 for players maybe? 
         self.lastBroadcastTime = 0
+        self.lastSnapshotTime = 0
         self.broadcastInterval = 0.05 # 20Hz
+        self.snapshotInterval = 2.5 # Every 2.5s
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
-    def get_random_spawn_position(self):
+    def get_random_spawn_position(self, center_x=0, center_y=0, distance=1000):
         angle = random.uniform(0, 2 * math.pi)
-        radius = random.uniform(0, 500)
-        position_x = radius * math.cos(angle)
-        position_y = radius * math.sin(angle)
+        radius = distance
+        position_x = center_x + radius * math.cos(angle)
+        position_y = center_y + radius * math.sin(angle)
         return position_x, position_y
 
     def run(self):
@@ -55,9 +72,33 @@ class Server:
             except BlockingIOError:
                 pass
             
+            self.update_enemies()
             self.cleanup_disconnected_players()
             self.broadcast_world_state_snapshot()
+            self.broadcast_entity_snapshots()
             time.sleep(0.01)
+
+    def update_enemies(self):
+        # Very basic server-side simulation to keep track of truth
+        delta_time = 0.01
+        for index, entity in self.entities.items():
+            if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
+                # Find closest player
+                closest_player = None
+                min_dist = 999999
+                for p in self.players.values():
+                    dist = math.sqrt((p["position_x"] - entity["position_x"])**2 + (p["position_y"] - entity["position_y"])**2)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_player = p
+                
+                if closest_player:
+                    dx = closest_player["position_x"] - entity["position_x"]
+                    dy = closest_player["position_y"] - entity["position_y"]
+                    length = math.sqrt(dx*dx + dy*dy)
+                    if length > 1:
+                        entity["position_x"] += (dx/length) * 150 * delta_time
+                        entity["position_y"] += (dy/length) * 150 * delta_time
 
     def handle_packet(self, data, address):
         if len(data) < struct.calcsize(HEADER_FORMAT):
@@ -70,7 +111,7 @@ class Server:
             if address not in self.players:
                 newIdentification = self.nextPlayerIdentification
                 self.nextPlayerIdentification += 1
-                spawnX, spawnY = self.get_random_spawn_position()
+                spawnX, spawnY = 0, 0
                 self.players[address] = {
                     "identification": newIdentification,
                     "position_x": spawnX,
@@ -80,10 +121,31 @@ class Server:
                     "lastHeartbeatReceived": time.time()
                 }
                 print(f"New player {newIdentification} connected from {address}")
+                
+                # Spawn 10 enemies around this new player
+                for _ in range(10):
+                    ex, ey = self.get_random_spawn_position(spawnX, spawnY, 1000)
+                    eIndex = self.nextEntityIndex
+                    self.nextEntityIndex += 1
+                    self.entities[eIndex] = {
+                        "type": ENTITY_CHARACTER,
+                        "charType": CHARACTER_ENEMY,
+                        "position_x": ex,
+                        "position_y": ey
+                    }
+                    # Notify everyone about new spawn
+                    self.broadcast_spawn(eIndex)
             
             player = self.players[address]
             identificationResponse = struct.pack(IDENTIFICATION_RESPONSE_FORMAT, PACKET_ID_RESPONSE, player["identification"], packetTimestamp)
             self.serverSocket.sendto(identificationResponse, address)
+            
+            # Send current world entities to the new player
+            for eIndex, entity in self.entities.items():
+                spawnPacket = struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
+                                         eIndex, entity["type"], entity["charType"], 
+                                         entity["position_x"], entity["position_y"])
+                self.serverSocket.sendto(spawnPacket, address)
 
         elif packetType == PACKET_HEARTBEAT:
             if address in self.players:
@@ -99,6 +161,14 @@ class Server:
                     self.players[address]["velocity_y"] = velocityY
                     self.players[address]["lastHeartbeatReceived"] = time.time()
 
+    def broadcast_spawn(self, entityIndex):
+        entity = self.entities[entityIndex]
+        packet = struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
+                            entityIndex, entity["type"], entity["charType"], 
+                            entity["position_x"], entity["position_y"])
+        for address in self.players:
+            self.serverSocket.sendto(packet, address)
+
     def broadcast_world_state_snapshot(self):
         currentTime = time.time()
         if currentTime - self.lastBroadcastTime < self.broadcastInterval:
@@ -108,19 +178,36 @@ class Server:
         if not self.players:
             return
 
-        # Prepare world state packet
+        # Prepare world state packet (Velocities only)
         playerList = list(self.players.values())
         playerCount = len(playerList)
         
-        # Header: type, playerIdentification (0 for server), timestamp, count
         worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, playerCount)
-        
         for player in playerList:
             worldStateData += struct.pack(PLAYER_STATE_FORMAT, player["identification"], player["velocity_x"], player["velocity_y"])
 
-        # Broadcast to all connected addresses
         for address in self.players:
             self.serverSocket.sendto(worldStateData, address)
+
+    def broadcast_entity_snapshots(self):
+        currentTime = time.time()
+        if currentTime - self.lastSnapshotTime < self.snapshotInterval:
+            return
+        self.lastSnapshotTime = currentTime
+
+        if not self.entities:
+            return
+
+        entityList = list(self.entities.items())
+        count = len(entityList)
+        
+        # We might need to split this if count is large, but for 10 enemies it's fine
+        snapshotData = struct.pack(ENTITY_SNAPSHOT_HEADER_FORMAT, PACKET_ENTITY_SNAPSHOT, 0, currentTime, count)
+        for index, entity in entityList:
+            snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, index, entity["position_x"], entity["position_y"])
+
+        for address in self.players:
+            self.serverSocket.sendto(snapshotData, address)
 
     def cleanup_disconnected_players(self):
         currentTime = time.time()

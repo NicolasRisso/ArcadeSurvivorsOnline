@@ -29,14 +29,16 @@ int main(void) {
 
         f32 deltaTime = GetFrameTime();
 
-        // Dead Reckoning for Remote Entities
+        // Predict movement for characters
         for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
-            if (currentConnectionState.remoteEntities[entityIndex].entityType != ENTITY_UNDEFINED) {
-                currentConnectionState.remoteEntities[entityIndex].position.x += currentConnectionState.remoteEntities[entityIndex].velocity.x * deltaTime;
-                currentConnectionState.remoteEntities[entityIndex].position.y += currentConnectionState.remoteEntities[entityIndex].velocity.y * deltaTime;
+            Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+            if (entity->entityType == ENTITY_CHARACTER) {
+                entity->character.position.x += entity->character.velocity.x * deltaTime;
+                entity->character.position.y += entity->character.velocity.y * deltaTime;
             }
         }
 
+        Enemy_UpdateMovement(deltaTime);
         Player_UpdateMovement(deltaTime);
 
         camera.target = currentConnectionState.localPosition;
@@ -68,6 +70,25 @@ int main(void) {
     Network_CloseConnection();
     CloseWindow();
     return 0;
+}
+
+// --- Enemy Implementation ---
+void Enemy_UpdateMovement(f32 deltaTime) {
+    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
+        Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+        if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY) {
+            // Move towards local player (simple deterministic AI)
+            Vector2 direction = Vector2Subtract(currentConnectionState.localPosition, entity->character.position);
+            if (Vector2Length(direction) > 1.0f) {
+                direction = Vector2Normalize(direction);
+                // Enemies move at 50% player speed
+                entity->character.velocity.x = direction.x * PLAYER_SPEED * 0.5f;
+                entity->character.velocity.y = direction.y * PLAYER_SPEED * 0.5f;
+            } else {
+                entity->character.velocity = (Vector2){ 0, 0 };
+            }
+        }
+    }
 }
 
 // --- Player Implementation ---
@@ -106,8 +127,13 @@ void Render_Entity(const Entity* entity) {
     
     switch (entity->entityType) {
         case ENTITY_CHARACTER:
-            DrawCircleV(entity->position, PLAYER_RADIUS, RED);
-            DrawText(TextFormat("CHAR (ID: %u)", entity->identification), entity->position.x - 20, entity->position.y - 40, 10, DARKGRAY);
+            if (entity->character.characterType == CHARACTER_PLAYER) {
+                DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
+                DrawText("PLAYER", entity->character.position.x - 20, entity->character.position.y - 40, 10, DARKGRAY);
+            } else if (entity->character.characterType == CHARACTER_ENEMY) {
+                DrawCircleV(entity->character.position, PLAYER_RADIUS, MAROON);
+                DrawText("ENEMY", entity->character.position.x - 20, entity->character.position.y - 40, 10, DARKGRAY);
+            }
             break;
         default:
             break;

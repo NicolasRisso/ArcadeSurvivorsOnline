@@ -53,7 +53,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
 }
 
 void Network_UpdateConnection(ConnectionState* connectionState) {
-    char receiveBuffer[2048]; 
+    char receiveBuffer[4096]; 
     struct sockaddr_in fromAddress;
     int fromAddressLength = sizeof(fromAddress);
 
@@ -79,28 +79,12 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 PacketVelocityUpdate* velocityUpdate = (PacketVelocityUpdate*)receiveBuffer;
                 if (velocityUpdate->header.playerIdentification == connectionState->localPlayerIdentification) break;
 
-                i32 availableSlotIndex = -1;
-                for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
-                    if (connectionState->remoteEntities[entityIndex].entityType != ENTITY_UNDEFINED && connectionState->remoteEntities[entityIndex].identification == velocityUpdate->header.playerIdentification) {
-                        availableSlotIndex = entityIndex;
-                        break;
-                    }
-                }
-
-                if (availableSlotIndex == -1) {
-                    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
-                        if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_UNDEFINED) {
-                            availableSlotIndex = entityIndex;
-                            break;
-                        }
-                    }
-                }
-
-                if (availableSlotIndex != -1) {
-                    connectionState->remoteEntities[availableSlotIndex].identification = velocityUpdate->header.playerIdentification;
-                    connectionState->remoteEntities[availableSlotIndex].entityType = ENTITY_CHARACTER;
-                    connectionState->remoteEntities[availableSlotIndex].velocity = velocityUpdate->velocity;
-                }
+                // For remote players, we still use the identification as index for now 
+                // (Server should ensure they fit in MAX_REMOTE_PLAYERS)
+                u32 entityIndex = velocityUpdate->header.playerIdentification % MAX_REMOTE_PLAYERS;
+                connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
+                connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
+                connectionState->remoteEntities[entityIndex].character.velocity = velocityUpdate->velocity;
                 break;
             }
             case PACKET_WORLD_STATE: {
@@ -109,27 +93,30 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     RemotePlayerState* remotePlayerState = &worldState->players[playerIndex];
                     if (remotePlayerState->identification == connectionState->localPlayerIdentification) continue;
 
-                    i32 availableSlotIndex = -1;
-                    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
-                        if (connectionState->remoteEntities[entityIndex].entityType != ENTITY_UNDEFINED && connectionState->remoteEntities[entityIndex].identification == remotePlayerState->identification) {
-                            availableSlotIndex = entityIndex;
-                            break;
-                        }
-                    }
-
-                    if (availableSlotIndex == -1) {
-                        for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
-                            if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_UNDEFINED) {
-                                availableSlotIndex = entityIndex;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (availableSlotIndex != -1) {
-                        connectionState->remoteEntities[availableSlotIndex].identification = remotePlayerState->identification;
-                        connectionState->remoteEntities[availableSlotIndex].entityType = ENTITY_CHARACTER;
-                        connectionState->remoteEntities[availableSlotIndex].velocity = remotePlayerState->velocity;
+                    u32 entityIndex = remotePlayerState->identification % MAX_REMOTE_PLAYERS;
+                    connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
+                    connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
+                    connectionState->remoteEntities[entityIndex].character.velocity = remotePlayerState->velocity;
+                }
+                break;
+            }
+            case PACKET_ENTITY_SPAWN: {
+                PacketEntitySpawn* spawn = (PacketEntitySpawn*)receiveBuffer;
+                u32 entityIndex = spawn->entityIndex % MAX_REMOTE_PLAYERS;
+                connectionState->remoteEntities[entityIndex].entityType = (EntityType)spawn->entityType;
+                if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
+                    connectionState->remoteEntities[entityIndex].character.characterType = (CharacterType)spawn->characterType;
+                    connectionState->remoteEntities[entityIndex].character.position = spawn->position;
+                    connectionState->remoteEntities[entityIndex].character.velocity = (Vector2){0, 0};
+                }
+                break;
+            }
+            case PACKET_ENTITY_SNAPSHOT: {
+                PacketEntitySnapshot* snapshot = (PacketEntitySnapshot*)receiveBuffer;
+                for (u32 i = 0; i < snapshot->count; i++) {
+                    u32 entityIndex = snapshot->snapshots[i].entityIndex % MAX_REMOTE_PLAYERS;
+                    if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
+                        connectionState->remoteEntities[entityIndex].character.position = snapshot->snapshots[i].position;
                     }
                 }
                 break;

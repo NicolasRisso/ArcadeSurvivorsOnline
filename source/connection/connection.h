@@ -15,7 +15,9 @@ typedef enum {
     PACKET_HEARTBEAT = 2,
     PACKET_HEARTBEAT_ACK = 3,
     PACKET_VELOCITY_UPDATE = 4,
-    PACKET_WORLD_STATE = 5
+    PACKET_WORLD_STATE = 5,
+    PACKET_ENTITY_SPAWN = 6,
+    PACKET_ENTITY_SNAPSHOT = 7
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 32
@@ -58,6 +60,26 @@ typedef struct {
     u32 count;
     RemotePlayerState players[MAX_REMOTE_PLAYERS];
 } PacketWorldState;
+
+typedef struct {
+    PacketHeader header;
+    u32 entityIndex;
+    u8 entityType;
+    u8 characterType;
+    Vector2 position;
+} PacketEntitySpawn;
+
+typedef struct {
+    u32 entityIndex;
+    Vector2 position;
+} EntitySnapshot;
+
+typedef struct {
+    PacketHeader header;
+    u32 count;
+    EntitySnapshot snapshots[MAX_REMOTE_PLAYERS];
+} PacketEntitySnapshot;
+
 #pragma pack(pop)
 
 typedef struct {
