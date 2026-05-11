@@ -15,8 +15,9 @@ echo [BUILD] Compiling...
 
 if %errorlevel% neq 0 (
     echo [ERROR] Build failed!
-    exit /b %errorlevel%
+) else (
+    echo [SUCCESS] Game built at %BIN_DIR%/game.exe
 )
 
-echo [SUCCESS] Game built at %BIN_DIR%/game.exe
+pause
 endlocal
