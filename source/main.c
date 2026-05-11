@@ -1,10 +1,6 @@
-#include "raylib.h"
+#include "main.h"
 #include "connection/connection.h"
 #include <math.h>
-
-#define MAP_SIZE 10000.0f
-#define PLAYER_SPEED 300.0f
-#define PLAYER_RADIUS 20.0f
 
 int main(void) {
     // Initialization
