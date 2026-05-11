@@ -107,6 +107,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
                     connectionState->remoteEntities[entityIndex].character.characterType = (CharacterType)spawn->characterType;
                     connectionState->remoteEntities[entityIndex].character.position = spawn->position;
+                    connectionState->remoteEntities[entityIndex].character.targetPosition = spawn->position;
                     connectionState->remoteEntities[entityIndex].character.velocity = (Vector2){0, 0};
                 }
                 break;
@@ -116,7 +117,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 for (u32 i = 0; i < snapshot->count; i++) {
                     u32 entityIndex = snapshot->snapshots[i].entityIndex % MAX_REMOTE_PLAYERS;
                     if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
-                        connectionState->remoteEntities[entityIndex].character.position = snapshot->snapshots[i].position;
+                        connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->snapshots[i].position;
                     }
                 }
                 break;

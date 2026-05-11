@@ -10,10 +10,12 @@
 #define MAP_SIZE 10000.0f
 #define PLAYER_SPEED 300.0f
 #define PLAYER_RADIUS 20.0f
+#define ENEMY_AVOIDANCE_RADIUS 45.0f
+#define ENEMY_AVOIDANCE_FORCE 0.5f
 
-#define SCREEN_WIDTH 1920
-#define SCREEN_HEIGHT 1080
-#define TARGET_FPS 165
+#define SCREEN_WIDTH 1280
+#define SCREEN_HEIGHT 720
+#define TARGET_FPS 60
 
 #define MAX_ENTITY_AMOUNT 20000
 
@@ -39,6 +41,7 @@ typedef struct Character{
     CharacterType characterType;
     Vector2 position;
     Vector2 velocity;
+    Vector2 targetPosition; // The "ground truth" from the server
 } Character;
 
 typedef struct Entity{

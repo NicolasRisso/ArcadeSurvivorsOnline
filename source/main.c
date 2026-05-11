@@ -29,12 +29,17 @@ int main(void) {
 
         f32 deltaTime = GetFrameTime();
 
-        // Predict movement for characters
+        // Predict and Interpolate movement for characters
         for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
             Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
             if (entity->entityType == ENTITY_CHARACTER) {
                 entity->character.position.x += entity->character.velocity.x * deltaTime;
                 entity->character.position.y += entity->character.velocity.y * deltaTime;
+                
+                entity->character.targetPosition.x += entity->character.velocity.x * deltaTime;
+                entity->character.targetPosition.y += entity->character.velocity.y * deltaTime;
+                
+                entity->character.position = Vector2Lerp(entity->character.position, entity->character.targetPosition, 0.1f);
             }
         }
 
@@ -44,7 +49,7 @@ int main(void) {
         camera.target = currentConnectionState.localPosition;
 
         BeginDrawing();
-            ClearBackground(RAYWHITE);
+            ClearBackground(DARKGRAY);
             BeginMode2D(camera);
                 Render_Map();
 
@@ -54,15 +59,20 @@ int main(void) {
 
                 if (currentConnectionState.isConnected) {
                     DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
-                    DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, DARKBLUE);
+                    DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
                 } else {
-                    DrawText("Connecting...", currentConnectionState.localPosition.x - 40, currentConnectionState.localPosition.y, 20, DARKGRAY);
+                    DrawText("Searching for server...", currentConnectionState.localPosition.x - 60, currentConnectionState.localPosition.y, 20, WHITE);
                 }
             EndMode2D();
+            
+            // UI Overlay
             DrawFPS(10, 10);
             if (!currentConnectionState.isConnected) {
-                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.3f));
+                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
                 DrawText("CONNECTING TO SERVER...", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, WHITE);
+                DrawText(TextFormat("Target IP: %s:%d", SERVER_IP, SERVER_PORT), SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2 + 40, 10, GRAY);
+            } else {
+                DrawText("CONNECTED", 10, 30, 20, GREEN);
             }
         EndDrawing();
     }
@@ -77,16 +87,43 @@ void Enemy_UpdateMovement(f32 deltaTime) {
     for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
         Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
         if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY) {
-            // Move towards local player (simple deterministic AI)
-            Vector2 direction = Vector2Subtract(currentConnectionState.localPosition, entity->character.position);
-            if (Vector2Length(direction) > 1.0f) {
-                direction = Vector2Normalize(direction);
-                // Enemies move at 50% player speed
-                entity->character.velocity.x = direction.x * PLAYER_SPEED * 0.5f;
-                entity->character.velocity.y = direction.y * PLAYER_SPEED * 0.5f;
+            
+            // 1. Calculate direction to player
+            Vector2 steerDirection = Vector2Subtract(currentConnectionState.localPosition, entity->character.position);
+            f32 distToPlayer = Vector2Length(steerDirection);
+            
+            if (distToPlayer > 1.0f) {
+                steerDirection = Vector2Normalize(steerDirection);
             } else {
-                entity->character.velocity = (Vector2){ 0, 0 };
+                steerDirection = (Vector2){ 0, 0 };
             }
+
+            // 2. Avoidance pass (Repulsion from other enemies)
+            Vector2 avoidanceForce = { 0, 0 };
+            for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_PLAYERS; otherIndex++) {
+                if (entityIndex == otherIndex) continue;
+                
+                Entity* other = &currentConnectionState.remoteEntities[otherIndex];
+                if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
+                    Vector2 diff = Vector2Subtract(entity->character.position, other->character.position);
+                    f32 distance = Vector2Length(diff);
+                    
+                    if (distance > 0 && distance < ENEMY_AVOIDANCE_RADIUS) {
+                        // Repulsion is stronger the closer they are
+                        f32 forceMagnitude = (1.0f - (distance / ENEMY_AVOIDANCE_RADIUS)) * ENEMY_AVOIDANCE_FORCE;
+                        avoidanceForce = Vector2Add(avoidanceForce, Vector2Scale(Vector2Normalize(diff), forceMagnitude));
+                    }
+                }
+            }
+            
+            // Combine pursuit and avoidance
+            Vector2 finalDirection = Vector2Add(steerDirection, avoidanceForce);
+            if (Vector2Length(finalDirection) > 0.1f) {
+                finalDirection = Vector2Normalize(finalDirection);
+            }
+
+            entity->character.velocity.x = finalDirection.x * PLAYER_SPEED * 0.5f;
+            entity->character.velocity.y = finalDirection.y * PLAYER_SPEED * 0.5f;
         }
     }
 }
@@ -129,10 +166,10 @@ void Render_Entity(const Entity* entity) {
         case ENTITY_CHARACTER:
             if (entity->character.characterType == CHARACTER_PLAYER) {
                 DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
-                DrawText("PLAYER", entity->character.position.x - 20, entity->character.position.y - 40, 10, DARKGRAY);
+                DrawText("PLAYER", entity->character.position.x - 20, entity->character.position.y - 40, 10, MAROON);
             } else if (entity->character.characterType == CHARACTER_ENEMY) {
-                DrawCircleV(entity->character.position, PLAYER_RADIUS, MAROON);
-                DrawText("ENEMY", entity->character.position.x - 20, entity->character.position.y - 40, 10, DARKGRAY);
+                DrawCircleV(entity->character.position, PLAYER_RADIUS, PURPLE);
+                DrawText("ENEMY", entity->character.position.x - 20, entity->character.position.y - 40, 10, PURPLE);
             }
             break;
         default:
@@ -141,9 +178,9 @@ void Render_Entity(const Entity* entity) {
 }
 
 void Render_Map(void) {
-    DrawRectangle(-MAP_SIZE/2, -MAP_SIZE/2, MAP_SIZE, MAP_SIZE, LIGHTGRAY);
-    for (i32 gridIndex = -MAP_SIZE/2; gridIndex <= MAP_SIZE/2; gridIndex += 500) {
-        DrawLine(gridIndex, -MAP_SIZE/2, gridIndex, MAP_SIZE/2, GRAY);
-        DrawLine(-MAP_SIZE/2, gridIndex, MAP_SIZE/2, gridIndex, GRAY);
+    DrawRectangle(-MAP_SIZE/2, -MAP_SIZE/2, MAP_SIZE, MAP_SIZE, BEIGE);
+    for (i32 gridIndex = -MAP_SIZE/2; gridIndex <= MAP_SIZE/2; gridIndex += 250) {
+        DrawLine(gridIndex, -MAP_SIZE/2, gridIndex, MAP_SIZE/2, LIGHTGRAY);
+        DrawLine(-MAP_SIZE/2, gridIndex, MAP_SIZE/2, gridIndex, LIGHTGRAY);
     }
 }

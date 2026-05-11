@@ -28,18 +28,18 @@ CHARACTER_UNDEFINED = 0
 CHARACTER_PLAYER = 1
 CHARACTER_ENEMY = 2
 
+# Avoidance Config
+ENEMY_AVOIDANCE_RADIUS = 45.0
+ENEMY_AVOIDANCE_FORCE = 0.5
+
 # Struct Formats (Little Endian, Packed)
 HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "Iff"
-
-# Entity Spawn: Header + index (I) + entityType (B) + charType (B) + pos_x (f) + pos_y (f)
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBff"
-# Entity Snapshot Header: Header + count (I)
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "I"
-# Single Snapshot: index (I) + pos_x (f) + pos_y (f)
 SINGLE_SNAPSHOT_FORMAT = "Iff"
 
 class Server:
@@ -47,58 +47,90 @@ class Server:
         self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.serverSocket.bind((SERVER_IP, SERVER_PORT))
         self.serverSocket.setblocking(False)
-        self.players = {} # (address): {identification, position_x, position_y, ...}
+        self.players = {} # (address): {identification, position_x, position_y, velocity_x, velocity_y, lastHeartbeatReceived}
         self.entities = {} # {index}: {type, charType, position_x, position_y, velocity_x, velocity_y}
         self.nextPlayerIdentification = 1
-        self.nextEntityIndex = 100 # Reserves 0-99 for players maybe? 
+        self.nextEntityIndex = 100 
         self.lastBroadcastTime = 0
         self.lastSnapshotTime = 0
-        self.broadcastInterval = 0.05 # 20Hz
-        self.snapshotInterval = 2.5 # Every 2.5s
+        self.broadcastInterval = 0.05 
+        self.snapshotInterval = 2.5 
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
     def get_random_spawn_position(self, center_x=0, center_y=0, distance=1000):
         angle = random.uniform(0, 2 * math.pi)
-        radius = distance
-        position_x = center_x + radius * math.cos(angle)
-        position_y = center_y + radius * math.sin(angle)
+        position_x = center_x + distance * math.cos(angle)
+        position_y = center_y + distance * math.sin(angle)
         return position_x, position_y
 
     def run(self):
+        last_time = time.time()
         while True:
+            current_time = time.time()
+            delta_time = current_time - last_time
+            last_time = current_time
+
             try:
                 data, address = self.serverSocket.recvfrom(2048)
                 self.handle_packet(data, address)
             except BlockingIOError:
                 pass
             
-            self.update_enemies()
+            self.update_server_simulation(delta_time)
             self.cleanup_disconnected_players()
             self.broadcast_world_state_snapshot()
             self.broadcast_entity_snapshots()
             time.sleep(0.01)
 
-    def update_enemies(self):
-        # Very basic server-side simulation to keep track of truth
-        delta_time = 0.01
+    def update_server_simulation(self, delta_time):
+        # Move players based on their last reported velocity
+        for player in self.players.values():
+            player["position_x"] += player["velocity_x"] * delta_time
+            player["position_y"] += player["velocity_y"] * delta_time
+
+        # Move enemies towards the first player (P1)
+        if not self.players:
+            return
+
+        target_player = next(iter(self.players.values()))
+
+        # Pass 1: Calculate new positions with avoidance
         for index, entity in self.entities.items():
             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
-                # Find closest player
-                closest_player = None
-                min_dist = 999999
-                for p in self.players.values():
-                    dist = math.sqrt((p["position_x"] - entity["position_x"])**2 + (p["position_y"] - entity["position_y"])**2)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_player = p
                 
-                if closest_player:
-                    dx = closest_player["position_x"] - entity["position_x"]
-                    dy = closest_player["position_y"] - entity["position_y"]
-                    length = math.sqrt(dx*dx + dy*dy)
-                    if length > 1:
-                        entity["position_x"] += (dx/length) * 150 * delta_time
-                        entity["position_y"] += (dy/length) * 150 * delta_time
+                # Pursue P1
+                dx = target_player["position_x"] - entity["position_x"]
+                dy = target_player["position_y"] - entity["position_y"]
+                dist = math.sqrt(dx*dx + dy*dy)
+                
+                steer_x, steer_y = 0, 0
+                if dist > 1.0:
+                    steer_x = dx / dist
+                    steer_y = dy / dist
+
+                # Avoidance from other enemies
+                avoid_x, avoid_y = 0, 0
+                for other_index, other in self.entities.items():
+                    if index == other_index: continue
+                    if other["type"] == ENTITY_CHARACTER and other["charType"] == CHARACTER_ENEMY:
+                        diff_x = entity["position_x"] - other["position_x"]
+                        diff_y = entity["position_y"] - other["position_y"]
+                        distance = math.sqrt(diff_x*diff_x + diff_y*diff_y)
+                        
+                        if 0 < distance < ENEMY_AVOIDANCE_RADIUS:
+                            force = (1.0 - (distance / ENEMY_AVOIDANCE_RADIUS)) * ENEMY_AVOIDANCE_FORCE
+                            avoid_x += (diff_x / distance) * force
+                            avoid_y += (diff_y / distance) * force
+                
+                # Apply combined direction
+                final_x = steer_x + avoid_x
+                final_y = steer_y + avoid_y
+                final_len = math.sqrt(final_x*final_x + final_y*final_y)
+                
+                if final_len > 0.1:
+                    speed = 150.0 # 50% of player speed
+                    entity["position_x"] += (final_x / final_len) * speed * delta_time
+                    entity["position_y"] += (final_y / final_len) * speed * delta_time
 
     def handle_packet(self, data, address):
         if len(data) < struct.calcsize(HEADER_FORMAT):
@@ -124,7 +156,7 @@ class Server:
                 
                 # Spawn 10 enemies around this new player
                 for _ in range(10):
-                    ex, ey = self.get_random_spawn_position(spawnX, spawnY, 1000)
+                    ex, ey = self.get_random_spawn_position(spawnX, spawnY, 800)
                     eIndex = self.nextEntityIndex
                     self.nextEntityIndex += 1
                     self.entities[eIndex] = {
@@ -133,7 +165,6 @@ class Server:
                         "position_x": ex,
                         "position_y": ey
                     }
-                    # Notify everyone about new spawn
                     self.broadcast_spawn(eIndex)
             
             player = self.players[address]
@@ -178,7 +209,6 @@ class Server:
         if not self.players:
             return
 
-        # Prepare world state packet (Velocities only)
         playerList = list(self.players.values())
         playerCount = len(playerList)
         
@@ -201,7 +231,6 @@ class Server:
         entityList = list(self.entities.items())
         count = len(entityList)
         
-        # We might need to split this if count is large, but for 10 enemies it's fine
         snapshotData = struct.pack(ENTITY_SNAPSHOT_HEADER_FORMAT, PACKET_ENTITY_SNAPSHOT, 0, currentTime, count)
         for index, entity in entityList:
             snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, index, entity["position_x"], entity["position_y"])
