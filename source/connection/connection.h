@@ -1,9 +1,7 @@
 #ifndef CONNECTION_H
 #define CONNECTION_H
 
-#include <stdbool.h>
-#include "modern_types.h"
-#include "raylib.h"
+#include "main.h"
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 12345
@@ -25,7 +23,7 @@ typedef enum {
 #pragma pack(push, 1)
 typedef struct {
     u8 type;
-    u32 player_id;
+    u32 playerIdentification;
     double timestamp;
 } PacketHeader;
 
@@ -51,7 +49,7 @@ typedef struct {
 } PacketVelocityUpdate;
 
 typedef struct {
-    u32 id;
+    u32 identification;
     Vector2 velocity;
 } RemotePlayerState;
 
@@ -63,21 +61,14 @@ typedef struct {
 #pragma pack(pop)
 
 typedef struct {
-    u32 id;
-    Vector2 pos;
-    Vector2 velocity;
-    bool active;
-} RemotePlayer;
-
-typedef struct {
-    u32 local_player_id;
-    Vector2 local_pos;
-    bool connected;
+    u32 localPlayerIdentification;
+    Vector2 localPosition;
+    bool isConnected;
     
-    double last_heartbeat_sent;
-    double last_heartbeat_ack;
+    double lastHeartbeatSent;
+    double lastHeartbeatReceived;
     
-    RemotePlayer remote_players[MAX_REMOTE_PLAYERS];
+    Entity remoteEntities[MAX_REMOTE_PLAYERS];
 } ConnectionState;
 
 bool Network_InitConnection(ConnectionState* state);
@@ -86,7 +77,7 @@ void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
 void Network_CloseConnection();
 
 static inline bool Network_IsConnected(ConnectionState* state) {
-    if(state) return state->connected;
+    if(state) return state->isConnected;
     return false;
 }
 

@@ -5,8 +5,8 @@ import random
 import math
 
 # Constants
-IP = "0.0.0.0"
-PORT = 12345
+SERVER_IP = "0.0.0.0"
+SERVER_PORT = 12345
 HEARTBEAT_TIMEOUT = 30.0
 
 # Packet Types
@@ -18,121 +18,120 @@ PACKET_VELOCITY_UPDATE = 4
 PACKET_WORLD_STATE = 5
 
 # Struct Formats (Little Endian, Packed)
-# Header: type (B), player_id (I), timestamp (d)
-HEADER_FMT = "<BId"
+# Header: type (B), playerIdentification (I), timestamp (d)
+HEADER_FORMAT = "<BId"
 # ID Response: Header only
-ID_RES_FMT = HEADER_FMT
-# Velocity Update: Header + vx (f), vy (f)
-VEL_UPD_FMT = HEADER_FMT + "ff"
+IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
+# Velocity Update: Header + velocity_x (f), velocity_y (f)
+VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 # World State: Header + count (I)
-WORLD_STATE_HEADER_FMT = HEADER_FMT + "I"
-# Player State in World State: id (I), vx (f), vy (f)
-PLAYER_STATE_FMT = "Iff"
+WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
+# Player State in World State: identification (I), velocity_x (f), velocity_y (f)
+PLAYER_STATE_FORMAT = "Iff"
 
 class Server:
     def __init__(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind((IP, PORT))
-        self.sock.setblocking(False)
-        self.players = {} # (addr): {id, x, y, vx, vy, last_heartbeat}
-        self.next_player_id = 1
-        self.last_broadcast = 0
-        self.broadcast_interval = 0.05 # 20Hz
-        print(f"Server started on {IP}:{PORT}")
+        self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.serverSocket.bind((SERVER_IP, SERVER_PORT))
+        self.serverSocket.setblocking(False)
+        self.players = {} # (address): {identification, x, y, velocity_x, velocity_y, lastHeartbeatReceived}
+        self.nextPlayerIdentification = 1
+        self.lastBroadcastTime = 0
+        self.broadcastInterval = 0.05 # 20Hz
+        print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
-    def get_random_spawn(self):
+    def get_random_spawn_position(self):
         angle = random.uniform(0, 2 * math.pi)
         radius = random.uniform(0, 500)
-        x = radius * math.cos(angle)
-        y = radius * math.sin(angle)
-        return x, y
+        position_x = radius * math.cos(angle)
+        position_y = radius * math.sin(angle)
+        return position_x, position_y
 
     def run(self):
         while True:
             try:
-                data, addr = self.sock.recvfrom(2048)
-                self.handle_packet(data, addr)
+                data, address = self.serverSocket.recvfrom(2048)
+                self.handle_packet(data, address)
             except BlockingIOError:
                 pass
             
-            self.cleanup_players()
-            self.broadcast_world_state()
+            self.cleanup_disconnected_players()
+            self.broadcast_world_state_snapshot()
             time.sleep(0.01)
 
-    def handle_packet(self, data, addr):
-        if len(data) < struct.calcsize(HEADER_FMT):
+    def handle_packet(self, data, address):
+        if len(data) < struct.calcsize(HEADER_FORMAT):
             return
 
-        header = struct.unpack(HEADER_FMT, data[:struct.calcsize(HEADER_FMT)])
-        p_type, p_id, p_timestamp = header
+        packetHeader = struct.unpack(HEADER_FORMAT, data[:struct.calcsize(HEADER_FORMAT)])
+        packetType, playerIdentification, packetTimestamp = packetHeader
 
-        if p_type == PACKET_ID_REQUEST:
-            if addr not in self.players:
-                new_id = self.next_player_id
-                self.next_player_id += 1
-                spawn_x, spawn_y = self.get_random_spawn()
-                self.players[addr] = {
-                    "id": new_id,
-                    "x": spawn_x,
-                    "y": spawn_y,
-                    "vx": 0.0,
-                    "vy": 0.0,
-                    "last_heartbeat": time.time()
+        if packetType == PACKET_ID_REQUEST:
+            if address not in self.players:
+                newIdentification = self.nextPlayerIdentification
+                self.nextPlayerIdentification += 1
+                spawnX, spawnY = self.get_random_spawn_position()
+                self.players[address] = {
+                    "identification": newIdentification,
+                    "position_x": spawnX,
+                    "position_y": spawnY,
+                    "velocity_x": 0.0,
+                    "velocity_y": 0.0,
+                    "lastHeartbeatReceived": time.time()
                 }
-                print(f"New player {new_id} connected from {addr}")
+                print(f"New player {newIdentification} connected from {address}")
             
-            p = self.players[addr]
-            res = struct.pack(ID_RES_FMT, PACKET_ID_RESPONSE, p["id"], p_timestamp)
-            self.sock.sendto(res, addr)
+            player = self.players[address]
+            identificationResponse = struct.pack(IDENTIFICATION_RESPONSE_FORMAT, PACKET_ID_RESPONSE, player["identification"], packetTimestamp)
+            self.serverSocket.sendto(identificationResponse, address)
 
-        elif p_type == PACKET_HEARTBEAT:
-            if addr in self.players:
-                self.players[addr]["last_heartbeat"] = time.time()
-                ack = struct.pack(HEADER_FMT, PACKET_HEARTBEAT_ACK, self.players[addr]["id"], p_timestamp)
-                self.sock.sendto(ack, addr)
+        elif packetType == PACKET_HEARTBEAT:
+            if address in self.players:
+                self.players[address]["lastHeartbeatReceived"] = time.time()
+                heartbeatAcknowledgment = struct.pack(HEADER_FORMAT, PACKET_HEARTBEAT_ACK, self.players[address]["identification"], packetTimestamp)
+                self.serverSocket.sendto(heartbeatAcknowledgment, address)
 
-        elif p_type == PACKET_VELOCITY_UPDATE:
-            if addr in self.players:
-                fmt = VEL_UPD_FMT
-                if len(data) >= struct.calcsize(fmt):
-                    _, _, _, vx, vy = struct.unpack(fmt, data[:struct.calcsize(fmt)])
-                    self.players[addr]["vx"] = vx
-                    self.players[addr]["vy"] = vy
-                    self.players[addr]["last_heartbeat"] = time.time()
+        elif packetType == PACKET_VELOCITY_UPDATE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(VELOCITY_UPDATE_FORMAT):
+                    _, _, _, velocityX, velocityY = struct.unpack(VELOCITY_UPDATE_FORMAT, data[:struct.calcsize(VELOCITY_UPDATE_FORMAT)])
+                    self.players[address]["velocity_x"] = velocityX
+                    self.players[address]["velocity_y"] = velocityY
+                    self.players[address]["lastHeartbeatReceived"] = time.time()
 
-    def broadcast_world_state(self):
-        now = time.time()
-        if now - self.last_broadcast < self.broadcast_interval:
+    def broadcast_world_state_snapshot(self):
+        currentTime = time.time()
+        if currentTime - self.lastBroadcastTime < self.broadcastInterval:
             return
-        self.last_broadcast = now
+        self.lastBroadcastTime = currentTime
 
         if not self.players:
             return
 
-        # Prepare packet
-        player_list = list(self.players.values())
-        count = len(player_list)
+        # Prepare world state packet
+        playerList = list(self.players.values())
+        playerCount = len(playerList)
         
-        # Header: type, id (0 for server), timestamp, count
-        data = struct.pack(WORLD_STATE_HEADER_FMT, PACKET_WORLD_STATE, 0, now, count)
+        # Header: type, playerIdentification (0 for server), timestamp, count
+        worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, playerCount)
         
-        for p in player_list:
-            data += struct.pack(PLAYER_STATE_FMT, p["id"], p["vx"], p["vy"])
+        for player in playerList:
+            worldStateData += struct.pack(PLAYER_STATE_FORMAT, player["identification"], player["velocity_x"], player["velocity_y"])
 
-        # Broadcast to all
-        for addr in self.players:
-            self.sock.sendto(data, addr)
+        # Broadcast to all connected addresses
+        for address in self.players:
+            self.serverSocket.sendto(worldStateData, address)
 
-    def cleanup_players(self):
-        now = time.time()
-        to_remove = []
-        for addr, p in self.players.items():
-            if now - p["last_heartbeat"] > HEARTBEAT_TIMEOUT:
-                print(f"Player {p['id']} timed out")
-                to_remove.append(addr)
+    def cleanup_disconnected_players(self):
+        currentTime = time.time()
+        addressesToRemove = []
+        for address, player in self.players.items():
+            if currentTime - player["lastHeartbeatReceived"] > HEARTBEAT_TIMEOUT:
+                print(f"Player {player['identification']} timed out")
+                addressesToRemove.append(address)
         
-        for addr in to_remove:
-            del self.players[addr]
+        for address in addressesToRemove:
+            del self.players[address]
 
 if __name__ == "__main__":
     server = Server()
