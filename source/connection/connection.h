@@ -1,8 +1,9 @@
 #ifndef CONNECTION_H
 #define CONNECTION_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include "modern_types.h"
+#include "raylib.h"
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 12345
@@ -15,14 +16,16 @@ typedef enum {
     PACKET_ID_RESPONSE = 1,
     PACKET_HEARTBEAT = 2,
     PACKET_HEARTBEAT_ACK = 3,
-    PACKET_POSITION_UPDATE = 4,
-    PACKET_WORLD_STATE = 5 // Not strictly used if we broadcast POSITION_UPDATE
+    PACKET_VELOCITY_UPDATE = 4,
+    PACKET_WORLD_STATE = 5
 } PacketType;
+
+#define MAX_REMOTE_PLAYERS 32
 
 #pragma pack(push, 1)
 typedef struct {
-    uint8_t type;
-    uint32_t player_id;
+    u8 type;
+    u32 player_id;
     double timestamp;
 } PacketHeader;
 
@@ -32,8 +35,6 @@ typedef struct {
 
 typedef struct {
     PacketHeader header;
-    float x;
-    float y;
 } PacketIDResponse;
 
 typedef struct {
@@ -46,24 +47,31 @@ typedef struct {
 
 typedef struct {
     PacketHeader header;
-    float x;
-    float y;
-} PacketPositionUpdate;
+    Vector2 velocity;
+} PacketVelocityUpdate;
+
+typedef struct {
+    u32 id;
+    Vector2 velocity;
+} RemotePlayerState;
+
+typedef struct {
+    PacketHeader header;
+    u32 count;
+    RemotePlayerState players[MAX_REMOTE_PLAYERS];
+} PacketWorldState;
 #pragma pack(pop)
 
 typedef struct {
-    uint32_t id;
-    float x;
-    float y;
+    u32 id;
+    Vector2 pos;
+    Vector2 velocity;
     bool active;
 } RemotePlayer;
 
-#define MAX_REMOTE_PLAYERS 32
-
 typedef struct {
-    uint32_t local_player_id;
-    float local_x;
-    float local_y;
+    u32 local_player_id;
+    Vector2 local_pos;
     bool connected;
     
     double last_heartbeat_sent;
@@ -72,9 +80,14 @@ typedef struct {
     RemotePlayer remote_players[MAX_REMOTE_PLAYERS];
 } ConnectionState;
 
-bool InitConnection(ConnectionState* state);
-void UpdateConnection(ConnectionState* state);
-void SendPosition(ConnectionState* state, float x, float y);
-void CloseConnection();
+bool Network_InitConnection(ConnectionState* state);
+void Network_UpdateConnection(ConnectionState* state);
+void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
+void Network_CloseConnection();
+
+static inline bool Network_IsConnected(ConnectionState* state) {
+    if(state) return state->connected;
+    return false;
+}
 
 #endif // CONNECTION_H

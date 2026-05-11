@@ -5,13 +5,11 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <stdio.h>
-#include "raylib.h"
-
 
 static SOCKET client_socket = INVALID_SOCKET;
 static struct sockaddr_in server_addr;
 
-bool InitConnection(ConnectionState* state) {
+bool Network_InitConnection(ConnectionState* state) {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         printf("Winsock init failed\n");
@@ -38,7 +36,7 @@ bool InitConnection(ConnectionState* state) {
     state->last_heartbeat_sent = 0;
     state->last_heartbeat_ack = GetTime();
 
-    for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
+    for (i32 i = 0; i < MAX_REMOTE_PLAYERS; i++) {
         state->remote_players[i].active = false;
     }
 
@@ -54,8 +52,8 @@ bool InitConnection(ConnectionState* state) {
     return true;
 }
 
-void UpdateConnection(ConnectionState* state) {
-    char buffer[1024];
+void Network_UpdateConnection(ConnectionState* state) {
+    char buffer[2048]; // Increased for world state
     struct sockaddr_in from_addr;
     int from_len = sizeof(from_addr);
 
@@ -68,33 +66,29 @@ void UpdateConnection(ConnectionState* state) {
             case PACKET_ID_RESPONSE: {
                 PacketIDResponse* res = (PacketIDResponse*)buffer;
                 state->local_player_id = res->header.player_id;
-                state->local_x = res->x;
-                state->local_y = res->y;
                 state->connected = true;
                 state->last_heartbeat_ack = GetTime();
-                printf("Connected! ID: %u, Spawn: (%.1f, %.1f)\n", state->local_player_id, state->local_x, state->local_y);
+                printf("Connected! ID: %u\n", state->local_player_id);
                 break;
             }
             case PACKET_HEARTBEAT_ACK: {
                 state->last_heartbeat_ack = GetTime();
                 break;
             }
-            case PACKET_POSITION_UPDATE: {
-                PacketPositionUpdate* pos = (PacketPositionUpdate*)buffer;
-                if (pos->header.player_id == state->local_player_id) break;
+            case PACKET_VELOCITY_UPDATE: {
+                PacketVelocityUpdate* vel = (PacketVelocityUpdate*)buffer;
+                if (vel->header.player_id == state->local_player_id) break;
 
-                // Update remote player
-                int slot = -1;
-                for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
-                    if (state->remote_players[i].active && state->remote_players[i].id == pos->header.player_id) {
+                i32 slot = -1;
+                for (i32 i = 0; i < MAX_REMOTE_PLAYERS; i++) {
+                    if (state->remote_players[i].active && state->remote_players[i].id == vel->header.player_id) {
                         slot = i;
                         break;
                     }
                 }
 
                 if (slot == -1) {
-                    // Find empty slot
-                    for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
+                    for (i32 i = 0; i < MAX_REMOTE_PLAYERS; i++) {
                         if (!state->remote_players[i].active) {
                             slot = i;
                             break;
@@ -103,10 +97,40 @@ void UpdateConnection(ConnectionState* state) {
                 }
 
                 if (slot != -1) {
-                    state->remote_players[slot].id = pos->header.player_id;
-                    state->remote_players[slot].x = pos->x;
-                    state->remote_players[slot].y = pos->y;
+                    state->remote_players[slot].id = vel->header.player_id;
+                    state->remote_players[slot].velocity = vel->velocity;
                     state->remote_players[slot].active = true;
+                }
+                break;
+            }
+            case PACKET_WORLD_STATE: {
+                PacketWorldState* world = (PacketWorldState*)buffer;
+                for (u32 i = 0; i < world->count; i++) {
+                    RemotePlayerState* ps = &world->players[i];
+                    if (ps->id == state->local_player_id) continue;
+
+                    i32 slot = -1;
+                    for (i32 j = 0; j < MAX_REMOTE_PLAYERS; j++) {
+                        if (state->remote_players[j].active && state->remote_players[j].id == ps->id) {
+                            slot = j;
+                            break;
+                        }
+                    }
+
+                    if (slot == -1) {
+                        for (i32 j = 0; j < MAX_REMOTE_PLAYERS; j++) {
+                            if (!state->remote_players[j].active) {
+                                slot = j;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (slot != -1) {
+                        state->remote_players[slot].id = ps->id;
+                        state->remote_players[slot].velocity = ps->velocity;
+                        state->remote_players[slot].active = true;
+                    }
                 }
                 break;
             }
@@ -125,26 +149,11 @@ void UpdateConnection(ConnectionState* state) {
             state->last_heartbeat_sent = now;
         }
 
-        // Retry heartbeat if no ACK after 500ms
-        if (now - state->last_heartbeat_ack > HEARTBEAT_RETRY_INTERVAL && now - state->last_heartbeat_sent < HEARTBEAT_INTERVAL) {
-             // Re-send if we haven't received an ACK for the last one after 500ms
-             // To keep it simple, we just send again if the gap is too large
-             if (now - state->last_heartbeat_sent > HEARTBEAT_RETRY_INTERVAL) {
-                 PacketHeartbeat hb;
-                 hb.header.type = PACKET_HEARTBEAT;
-                 hb.header.player_id = state->local_player_id;
-                 hb.header.timestamp = now;
-                 sendto(client_socket, (char*)&hb, sizeof(hb), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
-                 state->last_heartbeat_sent = now;
-             }
-        }
-
         if (now - state->last_heartbeat_ack > DISCONNECT_TIMEOUT) {
             printf("Connection timed out\n");
             state->connected = false;
         }
     } else {
-        // If not connected, retry ID request periodically
         static double last_id_req = 0;
         if (now - last_id_req > 2.0) {
             PacketIDRequest req;
@@ -157,20 +166,19 @@ void UpdateConnection(ConnectionState* state) {
     }
 }
 
-void SendPosition(ConnectionState* state, float x, float y) {
+void Network_SendVelocity(ConnectionState* state, Vector2 velocity) {
     if (!state->connected) return;
 
-    PacketPositionUpdate pkt;
-    pkt.header.type = PACKET_POSITION_UPDATE;
+    PacketVelocityUpdate pkt;
+    pkt.header.type = PACKET_VELOCITY_UPDATE;
     pkt.header.player_id = state->local_player_id;
     pkt.header.timestamp = GetTime();
-    pkt.x = x;
-    pkt.y = y;
+    pkt.velocity = velocity;
 
     sendto(client_socket, (char*)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
 }
 
-void CloseConnection() {
+void Network_CloseConnection() {
     if (client_socket != INVALID_SOCKET) {
         closesocket(client_socket);
         WSACleanup();
