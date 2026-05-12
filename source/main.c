@@ -88,25 +88,41 @@ void Enemy_UpdateMovement(f32 deltaTime) {
         Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
         if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY) {
             
-            // 1. Calculate direction to player
-            // For test purposes, follow P1 (Identification 1)
-            Vector2 targetPosition = currentConnectionState.localPosition;
-            if (currentConnectionState.localPlayerIdentification != 1) {
-                // Look for remote player with ID 1
-                u32 p1Index = 1 % MAX_REMOTE_PLAYERS;
-                Entity* p1 = &currentConnectionState.remoteEntities[p1Index];
-                if (p1->entityType == ENTITY_CHARACTER && p1->character.characterType == CHARACTER_PLAYER) {
-                    targetPosition = p1->character.position;
+            // 1. Check for spawn delay
+            if (GetTime() - entity->character.spawnTime < 3.0) {
+                entity->character.velocity = (Vector2){ 0, 0 };
+                continue;
+            }
+
+            // 2. Calculate direction to target player
+            Vector2 targetPosition = entity->character.position; // Default to staying put
+            bool targetFound = false;
+
+            if (entity->character.targetPlayerID != 0) {
+                if (currentConnectionState.localPlayerIdentification == entity->character.targetPlayerID) {
+                    targetPosition = currentConnectionState.localPosition;
+                    targetFound = true;
+                } else {
+                    // Look for remote player
+                    u32 targetIndex = entity->character.targetPlayerID % MAX_REMOTE_PLAYERS;
+                    Entity* targetPlayer = &currentConnectionState.remoteEntities[targetIndex];
+                    if (targetPlayer->entityType == ENTITY_CHARACTER && targetPlayer->character.characterType == CHARACTER_PLAYER) {
+                        targetPosition = targetPlayer->character.position;
+                        targetFound = true;
+                    }
                 }
             }
 
-            Vector2 steerDirection = Vector2Subtract(targetPosition, entity->character.position);
-            f32 distToPlayer = Vector2Length(steerDirection);
-            
-            if (distToPlayer > 1.0f) {
-                steerDirection = Vector2Normalize(steerDirection);
-            } else {
-                steerDirection = (Vector2){ 0, 0 };
+            Vector2 steerDirection = { 0, 0 };
+            if (targetFound) {
+                steerDirection = Vector2Subtract(targetPosition, entity->character.position);
+                f32 distToPlayer = Vector2Length(steerDirection);
+                
+                if (distToPlayer > 1.0f) {
+                    steerDirection = Vector2Normalize(steerDirection);
+                } else {
+                    steerDirection = (Vector2){ 0, 0 };
+                }
             }
 
             // 2. Avoidance pass (Repulsion from other enemies)

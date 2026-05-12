@@ -40,7 +40,7 @@ WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "Iff"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBff"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "I"
-SINGLE_SNAPSHOT_FORMAT = "Iff"
+SINGLE_SNAPSHOT_FORMAT = "IffI"
 
 class Server:
     def __init__(self):
@@ -48,7 +48,7 @@ class Server:
         self.serverSocket.bind((SERVER_IP, SERVER_PORT))
         self.serverSocket.setblocking(False)
         self.players = {} # (address): {identification, position_x, position_y, velocity_x, velocity_y, lastHeartbeatReceived}
-        self.entities = {} # {index}: {type, charType, position_x, position_y, velocity_x, velocity_y}
+        self.entities = {} # {index}: {type, charType, position_x, position_y, velocity_x, velocity_y, spawnTime, targetPlayerID}
         self.nextPlayerIdentification = 1
         self.nextEntityIndex = 100 
         self.lastBroadcastTime = 0
@@ -83,32 +83,22 @@ class Server:
             time.sleep(0.01)
 
     def update_server_simulation(self, delta_time):
+        current_time = time.time()
+        
         # Move players based on their last reported velocity
         for player in self.players.values():
             player["position_x"] += player["velocity_x"] * delta_time
             player["position_y"] += player["velocity_y"] * delta_time
 
-        # Move enemies towards the first player (P1)
-        if not self.players:
-            return
-
-        target_player = next(iter(self.players.values()))
-
-        # Pass 1: Calculate new positions with avoidance
+        # Update enemies
         for index, entity in self.entities.items():
             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                 
-                # Pursue P1
-                dx = target_player["position_x"] - entity["position_x"]
-                dy = target_player["position_y"] - entity["position_y"]
-                dist = math.sqrt(dx*dx + dy*dy)
-                
-                steer_x, steer_y = 0, 0
-                if dist > 1.0:
-                    steer_x = dx / dist
-                    steer_y = dy / dist
+                # Apply 3s delay
+                if current_time - entity["spawnTime"] < 3.0:
+                    continue
 
-                # Avoidance from other enemies
+                # Avoidance from other enemies (calculated first)
                 avoid_x, avoid_y = 0, 0
                 for other_index, other in self.entities.items():
                     if index == other_index: continue
@@ -121,16 +111,40 @@ class Server:
                             force = (1.0 - (distance / ENEMY_AVOIDANCE_RADIUS)) * ENEMY_AVOIDANCE_FORCE
                             avoid_x += (diff_x / distance) * force
                             avoid_y += (diff_y / distance) * force
+
+                # Random targeting
+                if not entity.get("targetPlayerID"):
+                    if self.players:
+                        random_player = random.choice(list(self.players.values()))
+                        entity["targetPlayerID"] = random_player["identification"]
                 
-                # Apply combined direction
-                final_x = steer_x + avoid_x
-                final_y = steer_y + avoid_y
-                final_len = math.sqrt(final_x*final_x + final_y*final_y)
-                
-                if final_len > 0.1:
-                    speed = 150.0 # 50% of player speed
-                    entity["position_x"] += (final_x / final_len) * speed * delta_time
-                    entity["position_y"] += (final_y / final_len) * speed * delta_time
+                if entity.get("targetPlayerID"):
+                    # Find the target player's current position
+                    target_pos = None
+                    for p in self.players.values():
+                        if p["identification"] == entity["targetPlayerID"]:
+                            target_pos = (p["position_x"], p["position_y"])
+                            break
+                    
+                    if target_pos:
+                        dx = target_pos[0] - entity["position_x"]
+                        dy = target_pos[1] - entity["position_y"]
+                        dist = math.sqrt(dx*dx + dy*dy)
+                        
+                        steer_x, steer_y = 0, 0
+                        if dist > 1.0:
+                            steer_x = dx / dist
+                            steer_y = dy / dist
+                        
+                        # Combine pursuit and avoidance
+                        final_x = steer_x + avoid_x
+                        final_y = steer_y + avoid_y
+                        final_len = math.sqrt(final_x*final_x + final_y*final_y)
+                        
+                        if final_len > 0.1:
+                            speed = 150.0 # 50% of player speed
+                            entity["position_x"] += (final_x / final_len) * speed * delta_time
+                            entity["position_y"] += (final_y / final_len) * speed * delta_time
 
     def handle_packet(self, data, address):
         if len(data) < struct.calcsize(HEADER_FORMAT):
@@ -163,7 +177,9 @@ class Server:
                         "type": ENTITY_CHARACTER,
                         "charType": CHARACTER_ENEMY,
                         "position_x": ex,
-                        "position_y": ey
+                        "position_y": ey,
+                        "spawnTime": time.time(),
+                        "targetPlayerID": 0
                     }
                     self.broadcast_spawn(eIndex)
             
@@ -233,7 +249,7 @@ class Server:
         
         snapshotData = struct.pack(ENTITY_SNAPSHOT_HEADER_FORMAT, PACKET_ENTITY_SNAPSHOT, 0, currentTime, count)
         for index, entity in entityList:
-            snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, index, entity["position_x"], entity["position_y"])
+            snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, index, entity["position_x"], entity["position_y"], entity.get("targetPlayerID", 0))
 
         for address in self.players:
             self.serverSocket.sendto(snapshotData, address)

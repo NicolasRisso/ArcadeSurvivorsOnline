@@ -74,6 +74,7 @@ typedef struct {
 typedef struct {
     u32 entityIndex;
     Vector2 position;
+    u32 targetPlayerID;
 } EntitySnapshot;
 
 typedef struct {

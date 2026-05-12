@@ -42,6 +42,8 @@ typedef struct Character{
     Vector2 position;
     Vector2 velocity;
     Vector2 targetPosition; // The "ground truth" from the server
+    f64 spawnTime;
+    u32 targetPlayerID;
 } Character;
 
 typedef struct Entity{
