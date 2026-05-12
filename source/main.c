@@ -89,7 +89,18 @@ void Enemy_UpdateMovement(f32 deltaTime) {
         if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY) {
             
             // 1. Calculate direction to player
-            Vector2 steerDirection = Vector2Subtract(currentConnectionState.localPosition, entity->character.position);
+            // For test purposes, follow P1 (Identification 1)
+            Vector2 targetPosition = currentConnectionState.localPosition;
+            if (currentConnectionState.localPlayerIdentification != 1) {
+                // Look for remote player with ID 1
+                u32 p1Index = 1 % MAX_REMOTE_PLAYERS;
+                Entity* p1 = &currentConnectionState.remoteEntities[p1Index];
+                if (p1->entityType == ENTITY_CHARACTER && p1->character.characterType == CHARACTER_PLAYER) {
+                    targetPosition = p1->character.position;
+                }
+            }
+
+            Vector2 steerDirection = Vector2Subtract(targetPosition, entity->character.position);
             f32 distToPlayer = Vector2Length(steerDirection);
             
             if (distToPlayer > 1.0f) {

@@ -8,6 +8,8 @@
 #define HEARTBEAT_INTERVAL 5.0
 #define HEARTBEAT_RETRY_INTERVAL 0.5
 #define DISCONNECT_TIMEOUT 30.0
+#define NETWORK_TPS 20.0
+#define NETWORK_UPDATE_INTERVAL (1.0 / NETWORK_TPS)
 
 typedef enum {
     PACKET_ID_REQUEST = 0,
@@ -26,7 +28,7 @@ typedef enum {
 typedef struct {
     u8 type;
     u32 playerIdentification;
-    double timestamp;
+    f64 timestamp;
 } PacketHeader;
 
 typedef struct {
@@ -87,8 +89,9 @@ typedef struct {
     Vector2 localPosition;
     bool isConnected;
     
-    double lastHeartbeatSent;
-    double lastHeartbeatReceived;
+    f64 lastHeartbeatSent;
+    f64 lastHeartbeatReceived;
+    f64 lastVelocitySentTime;
     
     Entity remoteEntities[MAX_REMOTE_PLAYERS];
 } ConnectionState;

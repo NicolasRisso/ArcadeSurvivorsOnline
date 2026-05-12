@@ -35,6 +35,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->localPlayerIdentification = 0;
     connectionState->lastHeartbeatSent = 0;
     connectionState->lastHeartbeatReceived = GetTime();
+    connectionState->lastVelocitySentTime = 0;
 
     for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
         connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
@@ -126,7 +127,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
     }
 
     // Heartbeat logic
-    double currentTimestamp = GetTime();
+    f64 currentTimestamp = GetTime();
     if (connectionState->isConnected) {
         if (currentTimestamp - connectionState->lastHeartbeatSent > HEARTBEAT_INTERVAL) {
             PacketHeartbeat heartbeatPacket;
@@ -142,7 +143,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             connectionState->isConnected = false;
         }
     } else {
-        static double lastIdentificationRequestTimestamp = 0;
+        static f64 lastIdentificationRequestTimestamp = 0;
         if (currentTimestamp - lastIdentificationRequestTimestamp > 2.0) {
             PacketIDRequest identificationRequest;
             identificationRequest.header.type = PACKET_ID_REQUEST;
@@ -157,13 +158,17 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
 void Network_SendVelocity(ConnectionState* connectionState, Vector2 velocity) {
     if (!connectionState->isConnected) return;
 
+    f64 currentTime = GetTime();
+    if (currentTime - connectionState->lastVelocitySentTime < NETWORK_UPDATE_INTERVAL) return;
+
     PacketVelocityUpdate velocityUpdatePacket;
     velocityUpdatePacket.header.type = PACKET_VELOCITY_UPDATE;
     velocityUpdatePacket.header.playerIdentification = connectionState->localPlayerIdentification;
-    velocityUpdatePacket.header.timestamp = GetTime();
+    velocityUpdatePacket.header.timestamp = currentTime;
     velocityUpdatePacket.velocity = velocity;
 
     sendto(clientSocket, (char*)&velocityUpdatePacket, sizeof(velocityUpdatePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+    connectionState->lastVelocitySentTime = currentTime;
 }
 
 void Network_CloseConnection() {
