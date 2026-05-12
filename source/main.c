@@ -88,13 +88,7 @@ void Enemy_UpdateMovement(f32 deltaTime) {
         Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
         if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY) {
             
-            // 1. Check for spawn delay
-            if (GetTime() - entity->character.spawnTime < 3.0) {
-                entity->character.velocity = (Vector2){ 0, 0 };
-                continue;
-            }
-
-            // 2. Calculate direction to target player
+            // 1. Calculate direction to target player
             Vector2 targetPosition = entity->character.position; // Default to staying put
             bool targetFound = false;
 
@@ -104,11 +98,19 @@ void Enemy_UpdateMovement(f32 deltaTime) {
                     targetFound = true;
                 } else {
                     // Look for remote player
-                    u32 targetIndex = entity->character.targetPlayerID % MAX_REMOTE_PLAYERS;
+                    u32 targetIndex = entity->character.targetPlayerID % MAX_REMOTE_ENTITIES;
                     Entity* targetPlayer = &currentConnectionState.remoteEntities[targetIndex];
                     if (targetPlayer->entityType == ENTITY_CHARACTER && targetPlayer->character.characterType == CHARACTER_PLAYER) {
                         targetPosition = targetPlayer->character.position;
                         targetFound = true;
+                    } else {
+                        // Diagnostic log (throttled)
+                        static f32 lastLogTime = 0;
+                        if (GetTime() - lastLogTime > 2.0) {
+                            printf("Enemy %d searching for Player %u at index %u... Found EntityType %d\n", 
+                                   entityIndex, entity->character.targetPlayerID, targetIndex, targetPlayer->entityType);
+                            lastLogTime = GetTime();
+                        }
                     }
                 }
             }
@@ -151,6 +153,16 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 
             entity->character.velocity.x = finalDirection.x * PLAYER_SPEED * 0.5f;
             entity->character.velocity.y = finalDirection.y * PLAYER_SPEED * 0.5f;
+
+            // Diagnostic: Heartbeat every 3 seconds for active enemies
+            static f32 lastHeartbeatTime = 0;
+            if (GetTime() - lastHeartbeatTime > 3.0) {
+                printf("Enemy %d active! Pos: (%.1f, %.1f), Vel: (%.1f, %.1f), TargetID: %u\n", 
+                       entityIndex, entity->character.position.x, entity->character.position.y,
+                       entity->character.velocity.x, entity->character.velocity.y,
+                       entity->character.targetPlayerID);
+                lastHeartbeatTime = GetTime();
+            }
         }
     }
 }

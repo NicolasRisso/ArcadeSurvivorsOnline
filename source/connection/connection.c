@@ -29,7 +29,10 @@ bool Network_InitConnection(ConnectionState* connectionState) {
 
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(SERVER_PORT);
-    inet_pton(AF_INET, SERVER_IP, &serverAddress.sin_addr);
+    if (inet_pton(AF_INET, SERVER_IP, &serverAddress.sin_addr) <= 0) {
+        printf("Invalid address/ Address not supported\n");
+        return false;
+    }
 
     connectionState->isConnected = false;
     connectionState->localPlayerIdentification = 0;
@@ -62,6 +65,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
     int bytesReceived;
     while ((bytesReceived = recvfrom(clientSocket, receiveBuffer, sizeof(receiveBuffer), 0, (struct sockaddr*)&fromAddress, &fromAddressLength)) > 0) {
         PacketHeader* packetHeader = (PacketHeader*)receiveBuffer;
+        // printf("DEBUG: Received packet type %d (%d bytes)\n", packetHeader->type, bytesReceived);
 
         switch (packetHeader->type) {
             case PACKET_ID_RESPONSE: {
@@ -113,7 +117,8 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     connectionState->remoteEntities[entityIndex].character.targetPosition = spawn->position;
                     connectionState->remoteEntities[entityIndex].character.velocity = (Vector2){0, 0};
                     connectionState->remoteEntities[entityIndex].character.spawnTime = GetTime();
-                    connectionState->remoteEntities[entityIndex].character.targetPlayerID = 0;
+                    connectionState->remoteEntities[entityIndex].character.targetPlayerID = spawn->targetPlayerID;
+                    printf("SPAWN: Enemy %u targeting Player %u\n", entityIndex, spawn->targetPlayerID);
                 }
                 break;
             }
@@ -157,6 +162,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             identificationRequest.header.timestamp = currentTimestamp;
             sendto(clientSocket, (char*)&identificationRequest, sizeof(identificationRequest), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
             lastIdentificationRequestTimestamp = currentTimestamp;
+            printf("Retrying connection to server...\n");
         }
     }
 }

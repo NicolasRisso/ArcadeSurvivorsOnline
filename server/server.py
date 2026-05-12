@@ -8,6 +8,7 @@ import math
 SERVER_IP = "0.0.0.0"
 SERVER_PORT = 12345
 HEARTBEAT_TIMEOUT = 30.0
+MAX_ENEMIES = 80
 
 # Packet Types
 PACKET_ID_REQUEST = 0
@@ -48,7 +49,7 @@ IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "Iffff"
-ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBff"
+ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffI"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "I"
 SINGLE_SNAPSHOT_FORMAT = "IffI"
 
@@ -60,7 +61,7 @@ class Server:
         self.players = {} # (address): {identification, position_x, position_y, velocity_x, velocity_y, lastHeartbeatReceived}
         self.entities = {} # {index}: {type, charType, position_x, position_y, velocity_x, velocity_y, spawnTime, targetPlayerID}
         self.nextPlayerIdentification = 1
-        self.nextEntityIndex = 100 
+        self.nextEntityIndex = 32 # Reserve 0-31 for players
         self.lastBroadcastTime = 0
         self.lastSnapshotTime = 0
         self.last_spawner_time = 0
@@ -106,10 +107,6 @@ class Server:
         for index, entity in list(self.entities.items()):
             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                 
-                # Apply 3s delay
-                if current_time - entity["spawnTime"] < 3.0:
-                    continue
-
                 # Avoidance from other enemies
                 avoid_x, avoid_y = 0, 0
                 for other_index, other in self.entities.items():
@@ -133,10 +130,17 @@ class Server:
                 if entity.get("targetPlayerID"):
                     # Find the target player's current position
                     target_pos = None
+                    target_found = False
                     for p in self.players.values():
                         if p["identification"] == entity["targetPlayerID"]:
                             target_pos = (p["position_x"], p["position_y"])
+                            target_found = True
                             break
+                    
+                    # If the player is gone, clear the target to trigger re-targeting next tick
+                    if not target_found:
+                        entity["targetPlayerID"] = 0
+                        continue
                     
                     if target_pos:
                         dx = target_pos[0] - entity["position_x"]
@@ -151,17 +155,26 @@ class Server:
                         # Combine pursuit and avoidance
                         final_x = steer_x + avoid_x
                         final_y = steer_y + avoid_y
-                        final_len = math.sqrt(final_x*final_x + final_y*final_y)
                         
-                        if final_len > 0.1:
-                            speed = 150.0 # 50% of player speed
-                            entity["position_x"] += (final_x / final_len) * speed * delta_time
-                            entity["position_y"] += (final_y / final_len) * speed * delta_time
+                        # Normalize final vector
+                        final_len = math.sqrt(final_x*final_x + final_y*final_y)
+                        if final_len > 0.001:
+                            final_x /= final_len
+                            final_y /= final_len
+                        else:
+                            final_x, final_y = 0, 0
+                        
+                        speed = 150.0
+                        entity["position_x"] += final_x * speed * delta_time
+                        entity["position_y"] += final_y * speed * delta_time
 
     def update_spawner(self, current_time):
         if current_time - self.last_spawner_time < SPAWN_INTERVAL:
             return
         
+        if len(self.entities) >= MAX_ENEMIES:
+            return
+
         if not self.players:
             return
             
@@ -225,13 +238,16 @@ class Server:
         for rx, ry in positions:
             eIndex = self.nextEntityIndex
             self.nextEntityIndex += 1
+            if self.nextEntityIndex >= 128:
+                self.nextEntityIndex = 32
+            
             self.entities[eIndex] = {
                 "type": ENTITY_CHARACTER,
                 "charType": CHARACTER_ENEMY,
                 "position_x": rx,
                 "position_y": ry,
                 "spawnTime": time.time(),
-                "targetPlayerID": 0
+                "targetPlayerID": target_player["identification"]
             }
             self.broadcast_spawn(eIndex)
             
@@ -245,6 +261,7 @@ class Server:
         packetType, playerIdentification, packetTimestamp = packetHeader
 
         if packetType == PACKET_ID_REQUEST:
+            print(f"Received ID request from {address}")
             if address not in self.players:
                 newIdentification = self.nextPlayerIdentification
                 self.nextPlayerIdentification += 1
@@ -268,7 +285,8 @@ class Server:
             for eIndex, entity in self.entities.items():
                 spawnPacket = struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
                                          eIndex, entity["type"], entity["charType"], 
-                                         entity["position_x"], entity["position_y"])
+                                         entity["position_x"], entity["position_y"],
+                                         entity.get("targetPlayerID", 0))
                 self.serverSocket.sendto(spawnPacket, address)
 
         elif packetType == PACKET_HEARTBEAT:
@@ -289,7 +307,8 @@ class Server:
         entity = self.entities[entityIndex]
         packet = struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
                             entityIndex, entity["type"], entity["charType"], 
-                            entity["position_x"], entity["position_y"])
+                            entity["position_x"], entity["position_y"],
+                            entity.get("targetPlayerID", 0))
         for address in self.players:
             self.serverSocket.sendto(packet, address)
 

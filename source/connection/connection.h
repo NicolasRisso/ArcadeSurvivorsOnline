@@ -72,6 +72,7 @@ typedef struct {
     u8 entityType;
     u8 characterType;
     Vector2 position;
+    u32 targetPlayerID;
 } PacketEntitySpawn;
 
 typedef struct {
