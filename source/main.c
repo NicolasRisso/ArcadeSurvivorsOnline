@@ -30,7 +30,7 @@ int main(void) {
         f32 deltaTime = GetFrameTime();
 
         // Predict and Interpolate movement for characters
-        for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
+        for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
             Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
             if (entity->entityType == ENTITY_CHARACTER) {
                 entity->character.position.x += entity->character.velocity.x * deltaTime;
@@ -53,7 +53,7 @@ int main(void) {
             BeginMode2D(camera);
                 Render_Map();
 
-                for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
+                for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
                     Render_Entity(&currentConnectionState.remoteEntities[entityIndex]);
                 }
 
@@ -84,7 +84,7 @@ int main(void) {
 
 // --- Enemy Implementation ---
 void Enemy_UpdateMovement(f32 deltaTime) {
-    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
+    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
         Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
         if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY) {
             
@@ -127,7 +127,7 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 
             // 2. Avoidance pass (Repulsion from other enemies)
             Vector2 avoidanceForce = { 0, 0 };
-            for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_PLAYERS; otherIndex++) {
+            for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_ENTITIES; otherIndex++) {
                 if (entityIndex == otherIndex) continue;
                 
                 Entity* other = &currentConnectionState.remoteEntities[otherIndex];

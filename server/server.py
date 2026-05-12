@@ -32,12 +32,22 @@ CHARACTER_ENEMY = 2
 ENEMY_AVOIDANCE_RADIUS = 45.0
 ENEMY_AVOIDANCE_FORCE = 0.5
 
+# Spawner Config
+SPAWN_INTERVAL = 1.75
+# Shapes: (weight, min_count, max_count, min_dist, max_dist)
+SPAWN_CONFIG = {
+    "SINGLE": (25, 1, 1, 400, 600),
+    "CIRCLE": (5, 8, 14, 700, 900),
+    "WALL": (3, 6, 12, 800, 1000),
+    "CLUSTER": (7, 5, 10, 500, 800)
+}
+
 # Struct Formats (Little Endian, Packed)
 HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
-PLAYER_STATE_FORMAT = "Iff"
+PLAYER_STATE_FORMAT = "Iffff"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBff"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "I"
 SINGLE_SNAPSHOT_FORMAT = "IffI"
@@ -53,6 +63,7 @@ class Server:
         self.nextEntityIndex = 100 
         self.lastBroadcastTime = 0
         self.lastSnapshotTime = 0
+        self.last_spawner_time = 0
         self.broadcastInterval = 0.05 
         self.snapshotInterval = 2.5 
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
@@ -77,6 +88,7 @@ class Server:
                 pass
             
             self.update_server_simulation(delta_time)
+            self.update_spawner(current_time)
             self.cleanup_disconnected_players()
             self.broadcast_world_state_snapshot()
             self.broadcast_entity_snapshots()
@@ -91,14 +103,14 @@ class Server:
             player["position_y"] += player["velocity_y"] * delta_time
 
         # Update enemies
-        for index, entity in self.entities.items():
+        for index, entity in list(self.entities.items()):
             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                 
                 # Apply 3s delay
                 if current_time - entity["spawnTime"] < 3.0:
                     continue
 
-                # Avoidance from other enemies (calculated first)
+                # Avoidance from other enemies
                 avoid_x, avoid_y = 0, 0
                 for other_index, other in self.entities.items():
                     if index == other_index: continue
@@ -146,6 +158,85 @@ class Server:
                             entity["position_x"] += (final_x / final_len) * speed * delta_time
                             entity["position_y"] += (final_y / final_len) * speed * delta_time
 
+    def update_spawner(self, current_time):
+        if current_time - self.last_spawner_time < SPAWN_INTERVAL:
+            return
+        
+        if not self.players:
+            return
+            
+        self.last_spawner_time = current_time
+        
+        # Spawn a random group for each player
+        available_shapes = list(SPAWN_CONFIG.keys())
+        for player in self.players.values():
+            if not available_shapes:
+                available_shapes = list(SPAWN_CONFIG.keys())
+            
+            # Weighted random selection from available shapes (to avoid immediate repeats)
+            weights = [SPAWN_CONFIG[s][0] for s in available_shapes]
+            shape = random.choices(available_shapes, weights=weights, k=1)[0]
+            available_shapes.remove(shape)
+            
+            self.spawn_random_group(player, shape)
+
+    def spawn_random_group(self, target_player, shape):
+        px, py = target_player["position_x"], target_player["position_y"]
+        
+        # 3. Determine count and base distance from config
+        _, min_c, max_c, min_d, max_d = SPAWN_CONFIG[shape]
+        count = random.randint(min_c, max_c)
+        distance = random.uniform(min_d, max_d)
+        
+        positions = []
+        
+        if shape == "SINGLE":
+            positions.append(self.get_random_spawn_position(px, py, distance))
+            
+        elif shape == "CIRCLE":
+            start_angle = random.uniform(0, 2 * math.pi)
+            for i in range(count):
+                angle = start_angle + (2 * math.pi * i / count)
+                positions.append((px + distance * math.cos(angle), py + distance * math.sin(angle)))
+                
+        elif shape == "WALL":
+            angle = random.uniform(0, 2 * math.pi)
+            center_x = px + distance * math.cos(angle)
+            center_y = py + distance * math.sin(angle)
+            
+            # Tangent direction
+            tx = -math.sin(angle)
+            ty = math.cos(angle)
+            
+            spacing = 40.0
+            for i in range(count):
+                offset = (i - count/2) * spacing
+                positions.append((center_x + tx * offset, center_y + ty * offset))
+                
+        elif shape == "CLUSTER":
+            # Center of the cluster
+            cx, cy = self.get_random_spawn_position(px, py, distance)
+            for _ in range(count):
+                ox = random.uniform(-50, 50)
+                oy = random.uniform(-50, 50)
+                positions.append((cx + ox, cy + oy))
+        
+        # 4. Spawn the entities
+        for rx, ry in positions:
+            eIndex = self.nextEntityIndex
+            self.nextEntityIndex += 1
+            self.entities[eIndex] = {
+                "type": ENTITY_CHARACTER,
+                "charType": CHARACTER_ENEMY,
+                "position_x": rx,
+                "position_y": ry,
+                "spawnTime": time.time(),
+                "targetPlayerID": 0
+            }
+            self.broadcast_spawn(eIndex)
+            
+        print(f"Spawned {count} enemies in {shape} pattern around player {target_player['identification']}")
+
     def handle_packet(self, data, address):
         if len(data) < struct.calcsize(HEADER_FORMAT):
             return
@@ -167,21 +258,7 @@ class Server:
                     "lastHeartbeatReceived": time.time()
                 }
                 print(f"New player {newIdentification} connected from {address}")
-                
-                # Spawn 10 enemies around this new player
-                for _ in range(10):
-                    ex, ey = self.get_random_spawn_position(spawnX, spawnY, 800)
-                    eIndex = self.nextEntityIndex
-                    self.nextEntityIndex += 1
-                    self.entities[eIndex] = {
-                        "type": ENTITY_CHARACTER,
-                        "charType": CHARACTER_ENEMY,
-                        "position_x": ex,
-                        "position_y": ey,
-                        "spawnTime": time.time(),
-                        "targetPlayerID": 0
-                    }
-                    self.broadcast_spawn(eIndex)
+                # (Removed legacy spawn 10 enemies on connect - now handled by 2.5s spawner)
             
             player = self.players[address]
             identificationResponse = struct.pack(IDENTIFICATION_RESPONSE_FORMAT, PACKET_ID_RESPONSE, player["identification"], packetTimestamp)
@@ -230,7 +307,10 @@ class Server:
         
         worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, playerCount)
         for player in playerList:
-            worldStateData += struct.pack(PLAYER_STATE_FORMAT, player["identification"], player["velocity_x"], player["velocity_y"])
+            worldStateData += struct.pack(PLAYER_STATE_FORMAT, 
+                                          player["identification"], 
+                                          player["position_x"], player["position_y"],
+                                          player["velocity_x"], player["velocity_y"])
 
         for address in self.players:
             self.serverSocket.sendto(worldStateData, address)
@@ -244,11 +324,12 @@ class Server:
         if not self.entities:
             return
 
-        entityList = list(self.entities.items())
-        count = len(entityList)
+        entityList = [e for e in self.entities.items() if e[1]["charType"] == CHARACTER_ENEMY]
+        count = min(len(entityList), 128)
         
         snapshotData = struct.pack(ENTITY_SNAPSHOT_HEADER_FORMAT, PACKET_ENTITY_SNAPSHOT, 0, currentTime, count)
-        for index, entity in entityList:
+        for i in range(count):
+            index, entity = entityList[i]
             snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, index, entity["position_x"], entity["position_y"], entity.get("targetPlayerID", 0))
 
         for address in self.players:

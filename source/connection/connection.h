@@ -23,6 +23,8 @@ typedef enum {
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 32
+#define MAX_REMOTE_ENTITIES 128
+#define MAX_PACKET_SIZE 4096
 
 #pragma pack(push, 1)
 typedef struct {
@@ -54,6 +56,7 @@ typedef struct {
 
 typedef struct {
     u32 identification;
+    Vector2 position;
     Vector2 velocity;
 } RemotePlayerState;
 
@@ -80,7 +83,7 @@ typedef struct {
 typedef struct {
     PacketHeader header;
     u32 count;
-    EntitySnapshot snapshots[MAX_REMOTE_PLAYERS];
+    EntitySnapshot snapshots[MAX_REMOTE_ENTITIES];
 } PacketEntitySnapshot;
 
 #pragma pack(pop)
@@ -94,7 +97,7 @@ typedef struct {
     f64 lastHeartbeatReceived;
     f64 lastVelocitySentTime;
     
-    Entity remoteEntities[MAX_REMOTE_PLAYERS];
+    Entity remoteEntities[MAX_REMOTE_ENTITIES];
 } ConnectionState;
 
 bool Network_InitConnection(ConnectionState* state);

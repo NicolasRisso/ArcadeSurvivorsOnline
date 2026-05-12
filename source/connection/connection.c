@@ -37,7 +37,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->lastHeartbeatReceived = GetTime();
     connectionState->lastVelocitySentTime = 0;
 
-    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_PLAYERS; entityIndex++) {
+    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
         connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
     }
 
@@ -81,8 +81,8 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 if (velocityUpdate->header.playerIdentification == connectionState->localPlayerIdentification) break;
 
                 // For remote players, we still use the identification as index for now 
-                // (Server should ensure they fit in MAX_REMOTE_PLAYERS)
-                u32 entityIndex = velocityUpdate->header.playerIdentification % MAX_REMOTE_PLAYERS;
+                // (Server should ensure they fit in MAX_REMOTE_ENTITIES)
+                u32 entityIndex = velocityUpdate->header.playerIdentification % MAX_REMOTE_ENTITIES;
                 connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
                 connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
                 connectionState->remoteEntities[entityIndex].character.velocity = velocityUpdate->velocity;
@@ -94,16 +94,18 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     RemotePlayerState* remotePlayerState = &worldState->players[playerIndex];
                     if (remotePlayerState->identification == connectionState->localPlayerIdentification) continue;
 
-                    u32 entityIndex = remotePlayerState->identification % MAX_REMOTE_PLAYERS;
+                    u32 entityIndex = remotePlayerState->identification % MAX_REMOTE_ENTITIES;
                     connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
                     connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
                     connectionState->remoteEntities[entityIndex].character.velocity = remotePlayerState->velocity;
+                    connectionState->remoteEntities[entityIndex].character.position = remotePlayerState->position;
+                    connectionState->remoteEntities[entityIndex].character.targetPosition = remotePlayerState->position;
                 }
                 break;
             }
             case PACKET_ENTITY_SPAWN: {
                 PacketEntitySpawn* spawn = (PacketEntitySpawn*)receiveBuffer;
-                u32 entityIndex = spawn->entityIndex % MAX_REMOTE_PLAYERS;
+                u32 entityIndex = spawn->entityIndex % MAX_REMOTE_ENTITIES;
                 connectionState->remoteEntities[entityIndex].entityType = (EntityType)spawn->entityType;
                 if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
                     connectionState->remoteEntities[entityIndex].character.characterType = (CharacterType)spawn->characterType;
@@ -118,8 +120,9 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             case PACKET_ENTITY_SNAPSHOT: {
                 PacketEntitySnapshot* snapshot = (PacketEntitySnapshot*)receiveBuffer;
                 for (u32 i = 0; i < snapshot->count; i++) {
-                    u32 entityIndex = snapshot->snapshots[i].entityIndex % MAX_REMOTE_PLAYERS;
-                    if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
+                    u32 entityIndex = snapshot->snapshots[i].entityIndex % MAX_REMOTE_ENTITIES;
+                    if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER && 
+                        connectionState->remoteEntities[entityIndex].character.characterType == CHARACTER_ENEMY) {
                         connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->snapshots[i].position;
                         connectionState->remoteEntities[entityIndex].character.targetPlayerID = snapshot->snapshots[i].targetPlayerID;
                     }
