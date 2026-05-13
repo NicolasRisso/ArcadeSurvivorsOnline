@@ -39,6 +39,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->lastHeartbeatSent = 0;
     connectionState->lastHeartbeatReceived = GetTime();
     connectionState->lastVelocitySentTime = 0;
+    connectionState->pendingKillsCount = 0;
 
     for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
         connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
@@ -115,10 +116,18 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     connectionState->remoteEntities[entityIndex].character.characterType = (CharacterType)spawn->characterType;
                     connectionState->remoteEntities[entityIndex].character.position = spawn->position;
                     connectionState->remoteEntities[entityIndex].character.targetPosition = spawn->position;
-                    connectionState->remoteEntities[entityIndex].character.velocity = (Vector2){0, 0};
+                    connectionState->remoteEntities[entityIndex].character.velocity = spawn->velocity;
                     connectionState->remoteEntities[entityIndex].character.spawnTime = GetTime();
                     connectionState->remoteEntities[entityIndex].character.targetPlayerID = spawn->targetPlayerID;
-                    printf("SPAWN: Enemy %u targeting Player %u\n", entityIndex, spawn->targetPlayerID);
+                    printf("SPAWN: Character %u (Type %d)\n", entityIndex, spawn->characterType);
+                } else if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_PROJECTILE) {
+                    connectionState->remoteEntities[entityIndex].projectile.type = (ProjectileType)spawn->characterType;
+                    connectionState->remoteEntities[entityIndex].projectile.position = spawn->position;
+                    connectionState->remoteEntities[entityIndex].projectile.velocity = spawn->velocity;
+                    connectionState->remoteEntities[entityIndex].projectile.lifetime = PROJECTILE_LIFETIME;
+                    connectionState->remoteEntities[entityIndex].projectile.ownerID = spawn->targetPlayerID;
+                    printf("SPAWN: Projectile %u (Type %d) Vel: (%.1f, %.1f)\n", 
+                           entityIndex, spawn->characterType, spawn->velocity.x, spawn->velocity.y);
                 }
                 break;
             }
@@ -137,6 +146,12 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                         connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->positions[i];
                     }
                 }
+                break;
+            }
+            case PACKET_ENTITY_DESPAWN: {
+                PacketEntityDespawn* despawn = (PacketEntityDespawn*)receiveBuffer;
+                u32 entityIndex = despawn->entityIndex % MAX_REMOTE_ENTITIES;
+                connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
                 break;
             }
         }
@@ -186,6 +201,52 @@ void Network_SendVelocity(ConnectionState* connectionState, Vector2 velocity) {
 
     sendto(clientSocket, (char*)&velocityUpdatePacket, sizeof(velocityUpdatePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
     connectionState->lastVelocitySentTime = currentTime;
+}
+
+void Network_QueueDeath(ConnectionState* state, u32 enemyID) {
+    if (state->pendingKillsCount < 512) {
+        state->pendingKills[state->pendingKillsCount++] = enemyID;
+    }
+}
+
+void Network_SendDeathReport(ConnectionState* state) {
+    if (!state->isConnected || state->pendingKillsCount == 0) return;
+
+    f64 currentTime = GetTime();
+    // We send every tick now (no timer)
+
+    // Send in batches of 128
+    u32 batchCount = (state->pendingKillsCount > 128) ? 128 : state->pendingKillsCount;
+
+    PacketEnemyDeathReport reportPacket;
+    reportPacket.header.type = PACKET_ENEMY_DEATH_REPORT;
+    reportPacket.header.playerIdentification = state->localPlayerIdentification;
+    reportPacket.header.timestamp = currentTime;
+    reportPacket.count = batchCount;
+    
+    for (u32 i = 0; i < batchCount; i++) {
+        reportPacket.enemyIDs[i] = state->pendingKills[i];
+    }
+
+    sendto(clientSocket, (char*)&reportPacket, sizeof(PacketHeader) + 4 + (batchCount * 4), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+    
+    // Shift remaining kills
+    if (batchCount < state->pendingKillsCount) {
+        memmove(state->pendingKills, state->pendingKills + batchCount, (state->pendingKillsCount - batchCount) * sizeof(u32));
+    }
+    state->pendingKillsCount -= batchCount;
+}
+
+void Network_SendWeaponFire(ConnectionState* state, WeaponType type) {
+    if (!state->isConnected) return;
+
+    PacketWeaponFire firePacket;
+    firePacket.header.type = PACKET_WEAPON_FIRE;
+    firePacket.header.playerIdentification = state->localPlayerIdentification;
+    firePacket.header.timestamp = GetTime();
+    firePacket.weaponType = (u8)type;
+
+    sendto(clientSocket, (char*)&firePacket, sizeof(firePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
 }
 
 void Network_CloseConnection() {

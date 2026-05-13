@@ -23,15 +23,31 @@ PACKET_VELOCITY_UPDATE = 4
 PACKET_WORLD_STATE = 5
 PACKET_ENTITY_SPAWN = 6
 PACKET_ENTITY_SNAPSHOT = 7
+PACKET_ENEMY_DEATH_REPORT = 8
+PACKET_ENTITY_DESPAWN = 9
+PACKET_WEAPON_FIRE = 10
 
-# Entity Types
-ENTITY_UNDEFINED = 0
-ENTITY_CHARACTER = 1
+# Projectile Types
+PROJECTILE_UNDEFINED = 0
+PROJECTILE_FIREBALL = 1
+
+# Projectile Config
+PROJECTILE_SPEED = 500.0
+PROJECTILE_LIFETIME = 3.0
 
 # Character Types
 CHARACTER_UNDEFINED = 0
 CHARACTER_PLAYER = 1
 CHARACTER_ENEMY = 2
+
+# Entity Types
+ENTITY_UNDEFINED = 0
+ENTITY_CHARACTER = 1
+ENTITY_PROJECTILE = 2
+
+# Weapon Types
+WEAPON_UNDEFINED = 0
+WEAPON_FIREBALL_RING = 1
 
 # Avoidance Config
 ENEMY_AVOIDANCE_RADIUS = 45.0
@@ -53,9 +69,12 @@ IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "Iffff"
-ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffI"
+ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIff"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
 SINGLE_SNAPSHOT_FORMAT = "ff"
+ENEMY_DEATH_REPORT_HEADER_FORMAT = HEADER_FORMAT + "I"
+ENTITY_DESPAWN_FORMAT = HEADER_FORMAT + "I"
+WEAPON_FIRE_FORMAT = HEADER_FORMAT + "B"
 
 class Server:
     def __init__(self):
@@ -171,6 +190,18 @@ class Server:
                         entity["position_x"] += final_x * speed * delta_time
                         entity["position_y"] += final_y * speed * delta_time
 
+        # Update projectiles
+        for index, entity in list(self.entities.items()):
+            if entity["type"] == ENTITY_PROJECTILE:
+                # Move
+                entity["position_x"] += entity["velocity_x"] * delta_time
+                entity["position_y"] += entity["velocity_y"] * delta_time
+                
+                # Lifetime check
+                if current_time - entity["spawnTime"] > PROJECTILE_LIFETIME:
+                    del self.entities[index]
+                    self.broadcast_despawn(index)
+
     def update_spawner(self, current_time):
         if current_time - self.last_spawner_time < SPAWN_INTERVAL:
             return
@@ -285,11 +316,8 @@ class Server:
             self.serverSocket.sendto(identificationResponse, address)
             
             # Send current world entities to the new player
-            for eIndex, entity in self.entities.items():
-                spawnPacket = struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
-                                         eIndex, entity["type"], entity["charType"], 
-                                         entity["position_x"], entity["position_y"],
-                                         entity.get("targetPlayerID", 0))
+            for eIndex in self.entities:
+                spawnPacket = self.get_spawn_packet(eIndex)
                 self.serverSocket.sendto(spawnPacket, address)
 
         elif packetType == PACKET_HEARTBEAT:
@@ -306,12 +334,72 @@ class Server:
                     self.players[address]["velocity_y"] = velocityY
                     self.players[address]["lastHeartbeatReceived"] = time.time()
 
-    def broadcast_spawn(self, entityIndex):
+        elif packetType == PACKET_ENEMY_DEATH_REPORT:
+            if address in self.players:
+                if len(data) >= struct.calcsize(ENEMY_DEATH_REPORT_HEADER_FORMAT):
+                    _, _, _, count = struct.unpack(ENEMY_DEATH_REPORT_HEADER_FORMAT, data[:struct.calcsize(ENEMY_DEATH_REPORT_HEADER_FORMAT)])
+                    
+                    id_format = "I" * count
+                    ids = struct.unpack("<" + id_format, data[struct.calcsize(ENEMY_DEATH_REPORT_HEADER_FORMAT):struct.calcsize(ENEMY_DEATH_REPORT_HEADER_FORMAT) + (count * 4)])
+                    
+                    for eIndex in ids:
+                        if eIndex in self.entities:
+                            # Verify it's an enemy (security)
+                            if self.entities[eIndex]["charType"] == CHARACTER_ENEMY:
+                                print(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                del self.entities[eIndex]
+                                self.broadcast_despawn(eIndex)
+
+        elif packetType == PACKET_WEAPON_FIRE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(WEAPON_FIRE_FORMAT):
+                    _, _, _, weaponType = struct.unpack(WEAPON_FIRE_FORMAT, data[:struct.calcsize(WEAPON_FIRE_FORMAT)])
+                    player = self.players[address]
+                    
+                    if weaponType == WEAPON_FIREBALL_RING: # Need to define WEAPON_FIREBALL_RING or use 1
+                        self.fire_fireball_ring(player)
+
+    def fire_fireball_ring(self, player):
+        directions = [
+            (0, -1), # North
+            (0, 1),  # South
+            (1, 0),  # East
+            (-1, 0)  # West
+        ]
+        
+        for dx, dy in directions:
+            eIndex = self.nextEntityIndex
+            self.nextEntityIndex += 1
+            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+                self.nextEntityIndex = MAX_PLAYERS
+            
+            self.entities[eIndex] = {
+                "type": ENTITY_PROJECTILE,
+                "charType": PROJECTILE_FIREBALL,
+                "position_x": player["position_x"],
+                "position_y": player["position_y"],
+                "velocity_x": dx * PROJECTILE_SPEED,
+                "velocity_y": dy * PROJECTILE_SPEED,
+                "spawnTime": time.time(),
+                "ownerID": player["identification"]
+            }
+            self.broadcast_spawn(eIndex)
+
+    def get_spawn_packet(self, entityIndex):
         entity = self.entities[entityIndex]
-        packet = struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
+        return struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
                             entityIndex, entity["type"], entity["charType"], 
                             entity["position_x"], entity["position_y"],
-                            entity.get("targetPlayerID", 0))
+                            entity.get("targetPlayerID", 0) if entity["type"] == ENTITY_CHARACTER else entity.get("ownerID", 0),
+                            entity.get("velocity_x", 0), entity.get("velocity_y", 0))
+
+    def broadcast_spawn(self, entityIndex):
+        packet = self.get_spawn_packet(entityIndex)
+        for address in self.players:
+            self.serverSocket.sendto(packet, address)
+
+    def broadcast_despawn(self, entityIndex):
+        packet = struct.pack(ENTITY_DESPAWN_FORMAT, PACKET_ENTITY_DESPAWN, 0, time.time(), entityIndex)
         for address in self.players:
             self.serverSocket.sendto(packet, address)
 

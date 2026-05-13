@@ -15,6 +15,11 @@ int main(void) {
         return 1;
     }
 
+    // Initialize player weapon
+    globalVariables.playerWeapons[0].type = WEAPON_FIREBALL_RING;
+    globalVariables.playerWeapons[0].cooldownTimer = 0.0f;
+    globalVariables.playerWeapons[0].level = 1;
+
     Camera2D camera = { 0 };
     camera.target = currentConnectionState.localPosition;
     camera.offset = (Vector2){ SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT / 2.0f };
@@ -45,6 +50,9 @@ int main(void) {
 
         Enemy_UpdateMovement(deltaTime);
         Player_UpdateMovement(deltaTime);
+        Weapons_Update(deltaTime);
+        Projectile_UpdateMovement(deltaTime);
+        Network_SendDeathReport(&currentConnectionState);
 
         camera.target = currentConnectionState.localPosition;
 
@@ -167,6 +175,62 @@ void Enemy_UpdateMovement(f32 deltaTime) {
     }
 }
 
+// --- Weapon System Implementation ---
+void Weapons_Update(f32 deltaTime) {
+    if (!currentConnectionState.isConnected) return;
+
+    for (i32 i = 0; i < 5; i++) {
+        Weapon* weapon = &globalVariables.playerWeapons[i];
+        if (weapon->type == WEAPON_FIREBALL_RING) {
+            weapon->cooldownTimer -= deltaTime;
+            if (weapon->cooldownTimer <= 0) {
+                Network_SendWeaponFire(&currentConnectionState, weapon->type);
+                weapon->cooldownTimer = FIREBALL_COOLDOWN;
+            }
+        }
+    }
+}
+
+void Projectile_UpdateMovement(f32 deltaTime) {
+    for (i32 i = 0; i < MAX_REMOTE_ENTITIES; i++) {
+        Entity* entity = &currentConnectionState.remoteEntities[i];
+        if (entity->entityType == ENTITY_PROJECTILE) {
+            Projectile* proj = &entity->projectile;
+            
+            // Move
+            proj->position.x += proj->velocity.x * deltaTime;
+            proj->position.y += proj->velocity.y * deltaTime;
+            
+            // Lifetime (Predicted locally)
+            proj->lifetime -= deltaTime;
+            if (proj->lifetime <= 0) {
+                entity->entityType = ENTITY_UNDEFINED;
+                continue;
+            }
+
+            // Collision check with enemies (Client prediction)
+            for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {
+                if (i == enemyIndex) continue;
+                Entity* remoteEntity = &currentConnectionState.remoteEntities[enemyIndex];
+                if (remoteEntity->entityType == ENTITY_CHARACTER && remoteEntity->character.characterType == CHARACTER_ENEMY) {
+                    f32 dist = Vector2Distance(proj->position, remoteEntity->character.position);
+                    if (dist < PLAYER_RADIUS) { 
+                        // Hit! (Prediction)
+                        entity->entityType = ENTITY_UNDEFINED;
+                        remoteEntity->entityType = ENTITY_UNDEFINED;
+                        Network_QueueDeath(&currentConnectionState, enemyIndex);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Weapon_FireFireballRing(Vector2 position, u32 ownerID) {
+    // Deprecated: Now handled by server via Network_SendWeaponFire
+}
+
 // --- Player Implementation ---
 void Player_UpdateMovement(f32 deltaTime) {
     if (!Network_IsConnected(&currentConnectionState)) return;
@@ -209,6 +273,12 @@ void Render_Entity(const Entity* entity) {
             } else if (entity->character.characterType == CHARACTER_ENEMY) {
                 DrawCircleV(entity->character.position, PLAYER_RADIUS, PURPLE);
                 DrawText("ENEMY", entity->character.position.x - 20, entity->character.position.y - 40, 10, PURPLE);
+            }
+            break;
+        case ENTITY_PROJECTILE:
+            if (entity->projectile.type == PROJECTILE_FIREBALL) {
+                DrawCircleV(entity->projectile.position, 10, ORANGE);
+                DrawCircleV(entity->projectile.position, 6, YELLOW);
             }
             break;
         default:

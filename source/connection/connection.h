@@ -19,7 +19,10 @@ typedef enum {
     PACKET_VELOCITY_UPDATE = 4,
     PACKET_WORLD_STATE = 5,
     PACKET_ENTITY_SPAWN = 6,
-    PACKET_ENTITY_SNAPSHOT = 7
+    PACKET_ENTITY_SNAPSHOT = 7,
+    PACKET_ENEMY_DEATH_REPORT = 8,
+    PACKET_ENTITY_DESPAWN = 9,
+    PACKET_WEAPON_FIRE = 10
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
@@ -73,14 +76,31 @@ typedef struct {
     u8 characterType;
     Vector2 position;
     u32 targetPlayerID;
+    Vector2 velocity;
 } PacketEntitySpawn;
 
 typedef struct {
     PacketHeader header;
     u16 firstEntityIndex;
     u16 count;
-    Vector2 positions[128]; // Max batch size
+    Vector2 positions[128]; 
 } PacketEntitySnapshot;
+
+typedef struct {
+    PacketHeader header;
+    u32 count;
+    u32 enemyIDs[128]; // Batch of killed enemies
+} PacketEnemyDeathReport;
+
+typedef struct {
+    PacketHeader header;
+    u32 entityIndex;
+} PacketEntityDespawn;
+
+typedef struct {
+    PacketHeader header;
+    u8 weaponType;
+} PacketWeaponFire;
 
 #pragma pack(pop)
 
@@ -94,11 +114,17 @@ typedef struct {
     f64 lastVelocitySentTime;
     
     Entity remoteEntities[MAX_REMOTE_ENTITIES];
+
+    u32 pendingKills[512];
+    u32 pendingKillsCount;
 } ConnectionState;
 
 bool Network_InitConnection(ConnectionState* state);
 void Network_UpdateConnection(ConnectionState* state);
 void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
+void Network_SendDeathReport(ConnectionState* state);
+void Network_SendWeaponFire(ConnectionState* state, WeaponType type);
+void Network_QueueDeath(ConnectionState* state, u32 enemyID);
 void Network_CloseConnection();
 
 static inline bool Network_IsConnected(ConnectionState* state) {

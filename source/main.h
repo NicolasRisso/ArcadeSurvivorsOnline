@@ -12,6 +12,9 @@
 #define PLAYER_RADIUS 20.0f
 #define ENEMY_AVOIDANCE_RADIUS 45.0f
 #define ENEMY_AVOIDANCE_FORCE 0.5f
+#define PROJECTILE_SPEED 500.0f
+#define PROJECTILE_LIFETIME 3.0f
+#define FIREBALL_COOLDOWN 2.0f
 
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
@@ -27,8 +30,19 @@ typedef struct u16Range { u16 minimum; u16 maximum; } u16Range;
 //~ Begin of Enums
 typedef enum EntityType : u8 {
     ENTITY_UNDEFINED = 0,
-    ENTITY_CHARACTER = 1
+    ENTITY_CHARACTER = 1,
+    ENTITY_PROJECTILE = 2
 } EntityType;
+
+typedef enum ProjectileType : u8 {
+    PROJECTILE_UNDEFINED = 0,
+    PROJECTILE_FIREBALL = 1
+} ProjectileType;
+
+typedef enum WeaponType : u8 {
+    WEAPON_UNDEFINED = 0,
+    WEAPON_FIREBALL_RING = 1
+} WeaponType;
 
 typedef enum CharacterType : u8 {
     CHARACTER_UNDEFINED = 0,
@@ -41,24 +55,48 @@ typedef struct Character{
     CharacterType characterType;
     Vector2 position;
     Vector2 velocity;
-    Vector2 targetPosition; // The "ground truth" from the server
+    Vector2 targetPosition; 
     f64 spawnTime;
     u32 targetPlayerID;
 } Character;
 
+typedef struct Projectile {
+    ProjectileType type;
+    Vector2 position;
+    Vector2 velocity;
+    f32 lifetime;
+    u32 ownerID;
+} Projectile;
+
+typedef struct Weapon {
+    WeaponType type;
+    f32 cooldownTimer;
+    i32 level;
+} Weapon;
+
 typedef struct Entity{
     EntityType entityType;
-    union { Character character; };
+    union { 
+        Character character; 
+        Projectile projectile;
+    };
 } Entity;
 
 //~ Global Definitions
 typedef struct GlobalVariables{
     Entity entities[MAX_ENTITY_AMOUNT];
+    Weapon playerWeapons[5];
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
 
 void Enemy_UpdateMovement(f32 deltaTime);
+
+//~ Begin of Weapons
+void Weapons_Update(f32 deltaTime);
+void Projectile_UpdateMovement(f32 deltaTime);
+void Weapon_FireFireballRing(Vector2 position, u32 ownerID);
+//~ End of Weapons
 
 //~ Begin of Player
 void Player_UpdateMovement(f32 deltaTime);
