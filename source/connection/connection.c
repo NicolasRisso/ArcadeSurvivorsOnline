@@ -125,11 +125,16 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             case PACKET_ENTITY_SNAPSHOT: {
                 PacketEntitySnapshot* snapshot = (PacketEntitySnapshot*)receiveBuffer;
                 for (u32 i = 0; i < snapshot->count; i++) {
-                    u32 entityIndex = snapshot->snapshots[i].entityIndex % MAX_REMOTE_ENTITIES;
+                    u32 entityIndex = snapshot->firstEntityIndex + i;
+                    if (entityIndex >= MAX_REMOTE_ENTITIES) break;
+
                     if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER && 
                         connectionState->remoteEntities[entityIndex].character.characterType == CHARACTER_ENEMY) {
-                        connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->snapshots[i].position;
-                        connectionState->remoteEntities[entityIndex].character.targetPlayerID = snapshot->snapshots[i].targetPlayerID;
+                        
+                        // Ignore (0,0) placeholders from server
+                        if (snapshot->positions[i].x == 0.0f && snapshot->positions[i].y == 0.0f) continue;
+
+                        connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->positions[i];
                     }
                 }
                 break;

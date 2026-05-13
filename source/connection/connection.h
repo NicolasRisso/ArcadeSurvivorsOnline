@@ -22,8 +22,8 @@ typedef enum {
     PACKET_ENTITY_SNAPSHOT = 7
 } PacketType;
 
-#define MAX_REMOTE_PLAYERS 32
-#define MAX_REMOTE_ENTITIES 128
+#define MAX_REMOTE_PLAYERS 4
+#define MAX_REMOTE_ENTITIES 3100
 #define MAX_PACKET_SIZE 4096
 
 #pragma pack(push, 1)
@@ -76,15 +76,10 @@ typedef struct {
 } PacketEntitySpawn;
 
 typedef struct {
-    u32 entityIndex;
-    Vector2 position;
-    u32 targetPlayerID;
-} EntitySnapshot;
-
-typedef struct {
     PacketHeader header;
-    u32 count;
-    EntitySnapshot snapshots[MAX_REMOTE_ENTITIES];
+    u16 firstEntityIndex;
+    u16 count;
+    Vector2 positions[128]; // Max batch size
 } PacketEntitySnapshot;
 
 #pragma pack(pop)

@@ -8,7 +8,11 @@ import math
 SERVER_IP = "0.0.0.0"
 SERVER_PORT = 12345
 HEARTBEAT_TIMEOUT = 30.0
-MAX_ENEMIES = 80
+MAX_ENEMIES = 3000
+MAX_PLAYERS = 4
+SNAPSHOT_CYCLE_TIME = 2.5
+SNAPSHOT_TICKS = 50 # 2.5s / 0.05s
+BATCH_SIZE = MAX_ENEMIES // SNAPSHOT_TICKS
 
 # Packet Types
 PACKET_ID_REQUEST = 0
@@ -50,8 +54,8 @@ VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "Iffff"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffI"
-ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "I"
-SINGLE_SNAPSHOT_FORMAT = "IffI"
+ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
+SINGLE_SNAPSHOT_FORMAT = "ff"
 
 class Server:
     def __init__(self):
@@ -61,12 +65,11 @@ class Server:
         self.players = {} # (address): {identification, position_x, position_y, velocity_x, velocity_y, lastHeartbeatReceived}
         self.entities = {} # {index}: {type, charType, position_x, position_y, velocity_x, velocity_y, spawnTime, targetPlayerID}
         self.nextPlayerIdentification = 1
-        self.nextEntityIndex = 32 # Reserve 0-31 for players
+        self.nextEntityIndex = MAX_PLAYERS 
         self.lastBroadcastTime = 0
-        self.lastSnapshotTime = 0
+        self.snapshot_tick_index = 0
         self.last_spawner_time = 0
         self.broadcastInterval = 0.05 
-        self.snapshotInterval = 2.5 
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
     def get_random_spawn_position(self, center_x=0, center_y=0, distance=1000):
@@ -92,7 +95,7 @@ class Server:
             self.update_spawner(current_time)
             self.cleanup_disconnected_players()
             self.broadcast_world_state_snapshot()
-            self.broadcast_entity_snapshots()
+            self.broadcast_entity_snapshots() # Called every tick now
             time.sleep(0.01)
 
     def update_server_simulation(self, delta_time):
@@ -238,8 +241,8 @@ class Server:
         for rx, ry in positions:
             eIndex = self.nextEntityIndex
             self.nextEntityIndex += 1
-            if self.nextEntityIndex >= 128:
-                self.nextEntityIndex = 32
+            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+                self.nextEntityIndex = MAX_PLAYERS
             
             self.entities[eIndex] = {
                 "type": ENTITY_CHARACTER,
@@ -336,23 +339,40 @@ class Server:
 
     def broadcast_entity_snapshots(self):
         currentTime = time.time()
-        if currentTime - self.lastSnapshotTime < self.snapshotInterval:
+        # We broadcast every tick, but only a slice of enemies
+        if currentTime - self.lastBroadcastTime < self.broadcastInterval:
             return
-        self.lastSnapshotTime = currentTime
-
-        if not self.entities:
-            return
-
-        entityList = [e for e in self.entities.items() if e[1]["charType"] == CHARACTER_ENEMY]
-        count = min(len(entityList), 128)
         
-        snapshotData = struct.pack(ENTITY_SNAPSHOT_HEADER_FORMAT, PACKET_ENTITY_SNAPSHOT, 0, currentTime, count)
-        for i in range(count):
-            index, entity = entityList[i]
-            snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, index, entity["position_x"], entity["position_y"], entity.get("targetPlayerID", 0))
+        if not self.players:
+            return
+
+        # Calculate range for this tick
+        first_index = MAX_PLAYERS + (self.snapshot_tick_index * BATCH_SIZE)
+        last_index = first_index + BATCH_SIZE
+        
+        # Gather positions for entities in this range
+        positions = []
+        for i in range(first_index, last_index):
+            entity = self.entities.get(i)
+            if entity and entity["charType"] == CHARACTER_ENEMY:
+                positions.append((entity["position_x"], entity["position_y"]))
+            else:
+                # If no enemy, we send (0,0) as a placeholder to keep sequence aligned
+                # The client will ignore indices that don't have an active enemy
+                positions.append((0.0, 0.0))
+
+        # Pack the header: Type, ID(0), Timestamp, firstID, count
+        snapshotData = struct.pack(ENTITY_SNAPSHOT_HEADER_FORMAT, PACKET_ENTITY_SNAPSHOT, 0, currentTime, first_index, len(positions))
+        
+        # Pack positions
+        for pos in positions:
+            snapshotData += struct.pack(SINGLE_SNAPSHOT_FORMAT, pos[0], pos[1])
 
         for address in self.players:
             self.serverSocket.sendto(snapshotData, address)
+            
+        # Increment tick index for next time
+        self.snapshot_tick_index = (self.snapshot_tick_index + 1) % SNAPSHOT_TICKS
 
     def cleanup_disconnected_players(self):
         currentTime = time.time()
