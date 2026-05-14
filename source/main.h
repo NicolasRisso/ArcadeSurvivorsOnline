@@ -15,6 +15,16 @@
 #define PROJECTILE_SPEED 500.0f
 #define PROJECTILE_LIFETIME 3.0f
 #define FIREBALL_COOLDOWN 2.0f
+#define CRYSTAL_COOLDOWN 1.5f
+#define BOMB_COOLDOWN 2.5f
+#define SPIKE_COOLDOWN 3.5f
+
+#define FIREBALL_RADIUS 50.0f
+#define BOMB_RADIUS 150.0f
+#define SPIKE_RADIUS 40.0f
+#define AURA_RADIUS 120.0f
+
+#define ENEMY_DEFAULT_HP 100.0f
 
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
@@ -36,12 +46,20 @@ typedef enum EntityType : u8 {
 
 typedef enum ProjectileType : u8 {
     PROJECTILE_UNDEFINED = 0,
-    PROJECTILE_FIREBALL = 1
+    PROJECTILE_FIREBALL = 1,
+    PROJECTILE_CRYSTAL = 2,
+    PROJECTILE_BOMB = 3,
+    PROJECTILE_SPIKE = 4,
+    PROJECTILE_EXPLOSION = 5
 } ProjectileType;
 
 typedef enum WeaponType : u8 {
     WEAPON_UNDEFINED = 0,
-    WEAPON_FIREBALL_RING = 1
+    WEAPON_FIREBALL_RING = 1,
+    WEAPON_CRYSTAL_STAFF = 2,
+    WEAPON_DEATH_AURA = 3,
+    WEAPON_BOMB_SHOES = 4,
+    WEAPON_NATURE_SPIKES = 5
 } WeaponType;
 
 typedef enum CharacterType : u8 {
@@ -58,6 +76,9 @@ typedef struct Character{
     Vector2 targetPosition; 
     f64 spawnTime;
     u32 targetPlayerID;
+    f32 health;
+    f32 maxHealth;
+    u8 weaponsMask;
 } Character;
 
 typedef struct Projectile {
@@ -66,7 +87,19 @@ typedef struct Projectile {
     Vector2 velocity;
     f32 lifetime;
     u32 ownerID;
+    f32 damageAccumulated; // For spikes
+    f32 tickTimer;         // For DOT effects
+    f32 radius;            // For explosions
+    u32 hitEnemies[8];     // For penetration (Crystal)
+    u8 hitCount;
 } Projectile;
+
+typedef struct VisualEffect {
+    Vector2 position;
+    f32 radius;
+    f32 lifetime;
+    bool active;
+} VisualEffect;
 
 typedef struct Weapon {
     WeaponType type;

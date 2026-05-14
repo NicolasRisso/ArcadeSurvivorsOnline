@@ -26,14 +26,38 @@ PACKET_ENTITY_SNAPSHOT = 7
 PACKET_ENEMY_DEATH_REPORT = 8
 PACKET_ENTITY_DESPAWN = 9
 PACKET_WEAPON_FIRE = 10
+PACKET_ENTITY_DAMAGE = 11
+PACKET_PROJECTILE_EXPLODE = 12
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
 PROJECTILE_FIREBALL = 1
+PROJECTILE_CRYSTAL = 2
+PROJECTILE_BOMB = 3
+PROJECTILE_SPIKE = 4
+PROJECTILE_EXPLOSION = 5
 
 # Projectile Config
 PROJECTILE_SPEED = 500.0
 PROJECTILE_LIFETIME = 3.0
+CRYSTAL_SPEED = 800.0
+CRYSTAL_LIFETIME = 5.0
+BOMB_DELAY = 2.0
+BOMB_LIFETIME = 2.5 # slightly more than delay to ensure it stays until explosion logic
+SPIKE_LIFETIME = 3.0
+
+# Damage values
+DAMAGE_FIREBALL = 50.0
+DAMAGE_CRYSTAL = 100.0
+DAMAGE_AURA = 15.0 # per tick
+DAMAGE_BOMB = 500.0
+DAMAGE_SPIKE = 20.0 # per tick
+SPIKE_MAX_DAMAGE = 150.0
+
+FIREBALL_RADIUS = 50.0
+BOMB_RADIUS = 150.0
+
+ENEMY_HEALTH = 100.0
 
 # Character Types
 CHARACTER_UNDEFINED = 0
@@ -48,6 +72,10 @@ ENTITY_PROJECTILE = 2
 # Weapon Types
 WEAPON_UNDEFINED = 0
 WEAPON_FIREBALL_RING = 1
+WEAPON_CRYSTAL_STAFF = 2
+WEAPON_DEATH_AURA = 3
+WEAPON_BOMB_SHOES = 4
+WEAPON_NATURE_SPIKES = 5
 
 # Avoidance Config
 ENEMY_AVOIDANCE_RADIUS = 45.0
@@ -68,13 +96,15 @@ HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
-PLAYER_STATE_FORMAT = "Iffff"
-ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIff"
+PLAYER_STATE_FORMAT = "IffffB"
+ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffff"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
 SINGLE_SNAPSHOT_FORMAT = "ff"
 ENEMY_DEATH_REPORT_HEADER_FORMAT = HEADER_FORMAT + "I"
 ENTITY_DESPAWN_FORMAT = HEADER_FORMAT + "I"
 WEAPON_FIRE_FORMAT = HEADER_FORMAT + "B"
+ENTITY_DAMAGE_FORMAT = HEADER_FORMAT + "If"
+PACKET_PROJECTILE_EXPLODE_FORMAT = HEADER_FORMAT + "I"
 
 class Server:
     def __init__(self):
@@ -198,7 +228,18 @@ class Server:
                 entity["position_y"] += entity["velocity_y"] * delta_time
                 
                 # Lifetime check
-                if current_time - entity["spawnTime"] > PROJECTILE_LIFETIME:
+                spawn_duration = current_time - entity["spawnTime"]
+                projectile_type = entity["charType"]
+                
+                max_lifetime = PROJECTILE_LIFETIME # Default 3.0
+                if projectile_type == PROJECTILE_CRYSTAL: max_lifetime = CRYSTAL_LIFETIME
+                elif projectile_type == PROJECTILE_BOMB: max_lifetime = BOMB_DELAY # Explode exactly at delay
+                elif projectile_type == PROJECTILE_SPIKE: max_lifetime = SPIKE_LIFETIME
+                elif projectile_type == PROJECTILE_EXPLOSION: max_lifetime = 0.5
+                
+                if spawn_duration > max_lifetime:
+                    if projectile_type == PROJECTILE_BOMB:
+                        self.spawn_explosion(entity["position_x"], entity["position_y"], BOMB_RADIUS, entity.get("ownerID", 0))
                     del self.entities[index]
                     self.broadcast_despawn(index)
 
@@ -281,7 +322,9 @@ class Server:
                 "position_x": rx,
                 "position_y": ry,
                 "spawnTime": time.time(),
-                "targetPlayerID": target_player["identification"]
+                "targetPlayerID": target_player["identification"],
+                "health": ENEMY_HEALTH,
+                "max_health": ENEMY_HEALTH
             }
             self.broadcast_spawn(eIndex)
             
@@ -306,7 +349,8 @@ class Server:
                     "position_y": spawnY,
                     "velocity_x": 0.0,
                     "velocity_y": 0.0,
-                    "lastHeartbeatReceived": time.time()
+                    "lastHeartbeatReceived": time.time(),
+                    "weapons_mask": 0
                 }
                 print(f"New player {newIdentification} connected from {address}")
                 # (Removed legacy spawn 10 enemies on connect - now handled by 2.5s spawner)
@@ -356,8 +400,53 @@ class Server:
                     _, _, _, weaponType = struct.unpack(WEAPON_FIRE_FORMAT, data[:struct.calcsize(WEAPON_FIRE_FORMAT)])
                     player = self.players[address]
                     
-                    if weaponType == WEAPON_FIREBALL_RING: # Need to define WEAPON_FIREBALL_RING or use 1
+                    if weaponType == WEAPON_FIREBALL_RING:
                         self.fire_fireball_ring(player)
+                    elif weaponType == WEAPON_CRYSTAL_STAFF:
+                        self.fire_crystal_staff(player)
+                    elif weaponType == WEAPON_DEATH_AURA:
+                        player["weapons_mask"] |= (1 << (weaponType - 1))
+                    elif weaponType == WEAPON_BOMB_SHOES:
+                        self.fire_bomb_shoes(player)
+                    elif weaponType == WEAPON_NATURE_SPIKES:
+                        self.fire_nature_spikes(player)
+
+        elif packetType == PACKET_ENTITY_DAMAGE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(ENTITY_DAMAGE_FORMAT):
+                    _, _, _, eIndex, damage = struct.unpack(ENTITY_DAMAGE_FORMAT, data[:struct.calcsize(ENTITY_DAMAGE_FORMAT)])
+                    if eIndex in self.entities:
+                        entity = self.entities[eIndex]
+                        if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
+                            entity["health"] -= damage
+                            print(f"Enemy {eIndex} took {damage} damage, HP: {entity['health']}")
+                            
+                            # If it was a fireball or bomb, spawn explosion visually?
+                            # Wait, we don't know what caused the damage from the report.
+                            # We'll let the client spawn the explosion locally for fireballs,
+                            # but server will spawn for bombs.
+                            
+                            if entity["health"] <= 0:
+                                print(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                del self.entities[eIndex]
+                                self.broadcast_despawn(eIndex)
+                            else:
+                                # Broadcast damage to other players
+                                self.broadcast_damage(eIndex, damage)
+                        elif entity["type"] == ENTITY_PROJECTILE and entity["charType"] == PROJECTILE_FIREBALL:
+                            # LEGACY: Handled by client PACKET_PROJECTILE_EXPLODE now
+                            pass
+
+        elif packetType == PACKET_PROJECTILE_EXPLODE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(PACKET_PROJECTILE_EXPLODE_FORMAT):
+                    _, _, _, projectileIndex = struct.unpack(PACKET_PROJECTILE_EXPLODE_FORMAT, data[:struct.calcsize(PACKET_PROJECTILE_EXPLODE_FORMAT)])
+                    if projectileIndex in self.entities:
+                        proj = self.entities[projectileIndex]
+                        if proj["type"] == ENTITY_PROJECTILE:
+                            self.spawn_explosion(proj["position_x"], proj["position_y"], FIREBALL_RADIUS, proj.get("ownerID", 0))
+                            del self.entities[projectileIndex]
+                            self.broadcast_despawn(projectileIndex)
 
     def fire_fireball_ring(self, player):
         directions = [
@@ -385,13 +474,125 @@ class Server:
             }
             self.broadcast_spawn(eIndex)
 
+    def fire_crystal_staff(self, player):
+        # Find closest enemy
+        closest_enemy = None
+        min_dist = 999999
+        px, py = player["position_x"], player["position_y"]
+        
+        for index, entity in self.entities.items():
+            if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
+                dx = entity["position_x"] - px
+                dy = entity["position_y"] - py
+                dist = math.sqrt(dx*dx + dy*dy)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_enemy = entity
+        
+        if closest_enemy:
+            dx = closest_enemy["position_x"] - px
+            dy = closest_enemy["position_y"] - py
+            dist = math.sqrt(dx*dx + dy*dy)
+            vx, vy = (dx/dist) * CRYSTAL_SPEED, (dy/dist) * CRYSTAL_SPEED
+            
+            eIndex = self.nextEntityIndex
+            self.nextEntityIndex += 1
+            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+                self.nextEntityIndex = MAX_PLAYERS
+            
+            self.entities[eIndex] = {
+                "type": ENTITY_PROJECTILE,
+                "charType": PROJECTILE_CRYSTAL,
+                "position_x": px,
+                "position_y": py,
+                "velocity_x": vx,
+                "velocity_y": vy,
+                "spawnTime": time.time(),
+                "ownerID": player["identification"]
+            }
+            self.broadcast_spawn(eIndex)
+
+    def fire_bomb_shoes(self, player):
+        eIndex = self.nextEntityIndex
+        self.nextEntityIndex += 1
+        if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+            self.nextEntityIndex = MAX_PLAYERS
+        
+        self.entities[eIndex] = {
+            "type": ENTITY_PROJECTILE,
+            "charType": PROJECTILE_BOMB,
+            "position_x": player["position_x"],
+            "position_y": player["position_y"],
+            "velocity_x": 0,
+            "velocity_y": 0,
+            "spawnTime": time.time(),
+            "ownerID": player["identification"]
+        }
+        self.broadcast_spawn(eIndex)
+
+    def fire_nature_spikes(self, player):
+        # Find random enemy in range
+        enemies_in_range = []
+        px, py = player["position_x"], player["position_y"]
+        for index, entity in self.entities.items():
+            if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
+                dx = entity["position_x"] - px
+                dy = entity["position_y"] - py
+                if math.sqrt(dx*dx + dy*dy) < 1000:
+                    enemies_in_range.append(entity)
+        
+        if enemies_in_range:
+            target = random.choice(enemies_in_range)
+            eIndex = self.nextEntityIndex
+            self.nextEntityIndex += 1
+            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+                self.nextEntityIndex = MAX_PLAYERS
+            
+            self.entities[eIndex] = {
+                "type": ENTITY_PROJECTILE,
+                "charType": PROJECTILE_SPIKE,
+                "position_x": target["position_x"],
+                "position_y": target["position_y"],
+                "velocity_x": 0,
+                "velocity_y": 0,
+                "spawnTime": time.time(),
+                "ownerID": player["identification"]
+            }
+            self.broadcast_spawn(eIndex)
+
+    def spawn_explosion(self, x, y, radius, owner_id):
+        eIndex = self.nextEntityIndex
+        self.nextEntityIndex += 1
+        if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+            self.nextEntityIndex = MAX_PLAYERS
+        
+        self.entities[eIndex] = {
+            "type": ENTITY_PROJECTILE,
+            "charType": PROJECTILE_EXPLOSION,
+            "position_x": x,
+            "position_y": y,
+            "velocity_x": 0,
+            "velocity_y": 0,
+            "spawnTime": time.time(),
+            "health": 0.5, # Use health field as lifetime/scale for explosions
+            "max_health": radius,
+            "ownerID": owner_id
+        }
+        self.broadcast_spawn(eIndex)
+
+    def broadcast_damage(self, entityIndex, damage):
+        packet = struct.pack(ENTITY_DAMAGE_FORMAT, PACKET_ENTITY_DAMAGE, 0, time.time(), entityIndex, damage)
+        for address in self.players:
+            self.serverSocket.sendto(packet, address)
+
     def get_spawn_packet(self, entityIndex):
         entity = self.entities[entityIndex]
         return struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
                             entityIndex, entity["type"], entity["charType"], 
                             entity["position_x"], entity["position_y"],
                             entity.get("targetPlayerID", 0) if entity["type"] == ENTITY_CHARACTER else entity.get("ownerID", 0),
-                            entity.get("velocity_x", 0), entity.get("velocity_y", 0))
+                            entity.get("velocity_x", 0), entity.get("velocity_y", 0),
+                            entity.get("health", 0.0), entity.get("max_health", 0.0))
 
     def broadcast_spawn(self, entityIndex):
         packet = self.get_spawn_packet(entityIndex)
@@ -420,7 +621,8 @@ class Server:
             worldStateData += struct.pack(PLAYER_STATE_FORMAT, 
                                           player["identification"], 
                                           player["position_x"], player["position_y"],
-                                          player["velocity_x"], player["velocity_y"])
+                                          player["velocity_x"], player["velocity_y"],
+                                          player.get("weapons_mask", 0))
 
         for address in self.players:
             self.serverSocket.sendto(worldStateData, address)
