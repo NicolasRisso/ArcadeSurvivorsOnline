@@ -125,29 +125,31 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     connectionState->remoteEntities[entityIndex].character.maxHealth = spawn->maxHealth;
                     printf("SPAWN: Character %u (Type %d) HP: %.1f/%.1f\n", entityIndex, spawn->characterType, spawn->health, spawn->maxHealth);
                 } else if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_PROJECTILE) {
-                    connectionState->remoteEntities[entityIndex].projectile.type = (ProjectileType)spawn->characterType;
-                    connectionState->remoteEntities[entityIndex].projectile.position = spawn->position;
-                    connectionState->remoteEntities[entityIndex].projectile.velocity = spawn->velocity;
+                    connectionState->remoteEntities[entityIndex].proj.type = (ProjectileType)spawn->characterType;
+                    connectionState->remoteEntities[entityIndex].proj.position = spawn->position;
+                    connectionState->remoteEntities[entityIndex].proj.velocity = spawn->velocity;
                     
                     // Lifetime (Predicted locally)
-                    if (connectionState->remoteEntities[entityIndex].projectile.type == PROJECTILE_BOMB) {
-                        connectionState->remoteEntities[entityIndex].projectile.lifetime = 2.0f; // BOMB_DELAY
-                    } else if (connectionState->remoteEntities[entityIndex].projectile.type == PROJECTILE_SPIKE) {
-                        connectionState->remoteEntities[entityIndex].projectile.lifetime = 3.0f; // SPIKE_LIFETIME
-                    } else if (connectionState->remoteEntities[entityIndex].projectile.type == PROJECTILE_EXPLOSION) {
-                        connectionState->remoteEntities[entityIndex].projectile.lifetime = 0.5f; // EXPLOSION_LIFETIME
+                    if (connectionState->remoteEntities[entityIndex].proj.type == PROJECTILE_BOMB) {
+                        connectionState->remoteEntities[entityIndex].proj.lifetime = 2.0f; // BOMB_DELAY
+                    } else if (connectionState->remoteEntities[entityIndex].proj.type == PROJECTILE_SPIKE) {
+                        connectionState->remoteEntities[entityIndex].proj.lifetime = 3.0f; // SPIKE_LIFETIME
+                    } else if (connectionState->remoteEntities[entityIndex].proj.type == PROJECTILE_EXPLOSION) {
+                        connectionState->remoteEntities[entityIndex].proj.lifetime = 0.5f; // EXPLOSION_LIFETIME
                     } else {
-                        connectionState->remoteEntities[entityIndex].projectile.lifetime = PROJECTILE_LIFETIME;
+                        connectionState->remoteEntities[entityIndex].proj.lifetime = PROJECTILE_LIFETIME;
                     }
 
-                    connectionState->remoteEntities[entityIndex].projectile.ownerID = spawn->targetPlayerID;
-                    connectionState->remoteEntities[entityIndex].projectile.hitCount = 0;
-                    connectionState->remoteEntities[entityIndex].projectile.damageAccumulated = 0;
-                    connectionState->remoteEntities[entityIndex].projectile.tickTimer = 0;
-                    connectionState->remoteEntities[entityIndex].projectile.radius = spawn->maxHealth;
+                    connectionState->remoteEntities[entityIndex].proj.ownerID = spawn->targetPlayerID;
+                    connectionState->remoteEntities[entityIndex].proj.hitCount = 0;
+                    connectionState->remoteEntities[entityIndex].proj.damageAccumulated = 0;
+                    connectionState->remoteEntities[entityIndex].proj.tickTimer = 0;
+                    connectionState->remoteEntities[entityIndex].proj.radius = spawn->maxHealth;
+                    connectionState->remoteEntities[entityIndex].proj.damage = spawn->health;
+                    connectionState->remoteEntities[entityIndex].proj.pierce = spawn->extraParam;
                     
                     // Prediction: If this is an explosion that WE predicted, ignore it.
-                    if (connectionState->remoteEntities[entityIndex].projectile.type == PROJECTILE_EXPLOSION) {
+                    if (connectionState->remoteEntities[entityIndex].proj.type == PROJECTILE_EXPLOSION) {
                         if (spawn->targetPlayerID == connectionState->localPlayerIdentification) {
                             connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
                             return; // Skip spawn
@@ -155,7 +157,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     }
 
                     printf("SPAWN: Projectile %u (Type %d) Vel: (%.1f, %.1f)\n", 
-                           entityIndex, (int)connectionState->remoteEntities[entityIndex].projectile.type, spawn->velocity.x, spawn->velocity.y);
+                           entityIndex, (int)connectionState->remoteEntities[entityIndex].proj.type, spawn->velocity.x, spawn->velocity.y);
                 } else if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_XP_CRYSTAL) {
                     connectionState->remoteEntities[entityIndex].xpCrystal.position = spawn->position;
                     connectionState->remoteEntities[entityIndex].xpCrystal.xpValue = spawn->health;
@@ -283,16 +285,19 @@ void Network_SendDeathReport(ConnectionState* state) {
     state->pendingKillsCount -= batchCount;
 }
 
-void Network_SendWeaponFire(ConnectionState* state, WeaponType type) {
+void Network_SendWeaponFire(ConnectionState* state, u8 weaponType, f32 damage, f32 radius, i32 extraParam) {
     if (!state->isConnected) return;
 
-    PacketWeaponFire firePacket;
-    firePacket.header.type = PACKET_WEAPON_FIRE;
-    firePacket.header.playerIdentification = state->localPlayerIdentification;
-    firePacket.header.timestamp = GetTime();
-    firePacket.weaponType = (u8)type;
+    PacketWeaponFire packet;
+    packet.header.type = PACKET_WEAPON_FIRE;
+    packet.header.playerIdentification = state->localPlayerIdentification;
+    packet.header.timestamp = GetTime();
+    packet.weaponType = weaponType;
+    packet.damage = damage;
+    packet.radius = radius;
+    packet.extraParam = extraParam;
 
-    sendto(clientSocket, (char*)&firePacket, sizeof(firePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+    sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
 }
 
 void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage) {

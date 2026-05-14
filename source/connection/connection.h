@@ -84,6 +84,7 @@ typedef struct {
     Vector2 velocity;
     f32 health;
     f32 maxHealth;
+    i32 extraParam;
 } PacketEntitySpawn;
 
 typedef struct {
@@ -107,6 +108,9 @@ typedef struct {
 typedef struct {
     PacketHeader header;
     u8 weaponType;
+    f32 damage;
+    f32 radius;
+    i32 extraParam;
 } PacketWeaponFire;
 
 typedef struct {
@@ -162,7 +166,7 @@ bool Network_InitConnection(ConnectionState* state);
 void Network_UpdateConnection(ConnectionState* state);
 void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
 void Network_SendDeathReport(ConnectionState* state);
-void Network_SendWeaponFire(ConnectionState* state, WeaponType type);
+void Network_SendWeaponFire(ConnectionState* state, u8 weaponType, f32 damage, f32 radius, i32 extraParam);
 void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage);
 void Network_SendDamageBatch(ConnectionState* state);
 void Network_SendXPCollect(ConnectionState* state, u32 crystalIndex);

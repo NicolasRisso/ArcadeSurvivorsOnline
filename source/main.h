@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <time.h>
 #include "modern_types.h"
 #include "raylib.h"
 #include "raymath.h"
@@ -97,9 +99,11 @@ typedef struct Projectile {
     f32 lifetime;
     u32 ownerID;
     f32 damageAccumulated; // For spikes
-    f32 tickTimer;         // For DOT effects
-    f32 radius;            // For explosions
-    u32 hitEnemies[8];     // For penetration (Crystal)
+    f32 tickTimer;
+    f32 radius;
+    f32 damage;
+    i32 pierce;
+    u32 hitEnemies[8];
     u8 hitCount;
 } Projectile;
 
@@ -118,17 +122,36 @@ typedef struct VisualEffect {
     bool active;
 } VisualEffect;
 
+typedef struct WeaponStats {
+    f32 damage;
+    f32 attackSpeed;
+    f32 size;
+    union {
+        struct { i32 pierce; i32 projectileAmount; } crystalStaff;
+        struct { f32 damageCap; i32 spikeAmount; } natureSpikes;
+        struct { f32 explosionSize; } fireball;
+    } spec;
+} WeaponStats;
+
 typedef struct Weapon {
     WeaponType type;
+    u8 level;
     f32 cooldownTimer;
-    i32 level;
+    WeaponStats stats;
 } Weapon;
+
+typedef struct LevelUpOption {
+    WeaponType type;
+    const char* name;
+    const char* description;
+    Color color;
+} LevelUpOption;
 
 typedef struct Entity{
     EntityType entityType;
     union { 
         Character character; 
-        Projectile projectile;
+        Projectile proj;
         XPCrystal xpCrystal;
     };
 } Entity;

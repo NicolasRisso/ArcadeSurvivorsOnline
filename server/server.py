@@ -103,12 +103,12 @@ IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "IffffB"
-ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffff"
+ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffffi"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
 SINGLE_SNAPSHOT_FORMAT = "ff"
 ENEMY_DEATH_REPORT_HEADER_FORMAT = HEADER_FORMAT + "I"
 ENTITY_DESPAWN_FORMAT = HEADER_FORMAT + "I"
-WEAPON_FIRE_FORMAT = HEADER_FORMAT + "B"
+WEAPON_FIRE_FORMAT = HEADER_FORMAT + "Bffi"
 ENTITY_DAMAGE_FORMAT = HEADER_FORMAT + "If"
 PACKET_PROJECTILE_EXPLODE_FORMAT = HEADER_FORMAT + "I"
 PACKET_XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
@@ -451,19 +451,42 @@ class Server:
         elif packetType == PACKET_WEAPON_FIRE:
             if address in self.players:
                 if len(data) >= struct.calcsize(WEAPON_FIRE_FORMAT):
-                    _, _, _, weaponType = struct.unpack(WEAPON_FIRE_FORMAT, data[:struct.calcsize(WEAPON_FIRE_FORMAT)])
+                    header = data[:struct.calcsize(HEADER_FORMAT)]
+                    payload = data[struct.calcsize(HEADER_FORMAT):]
+                    weaponType, damage, radius, extra = struct.unpack("<Bffi", payload)
                     player = self.players[address]
                     
+                    px, py = player["position_x"], player["position_y"]
+                    player_id = player["identification"]
+
                     if weaponType == WEAPON_FIREBALL_RING:
-                        self.fire_fireball_ring(player)
+                        num_fireballs = 8
+                        for i in range(num_fireballs):
+                            angle = (i / num_fireballs) * 2 * math.pi
+                            vx = math.cos(angle) * 500
+                            vy = math.sin(angle) * 500
+                            self.spawn_projectile(ENTITY_PROJECTILE, PROJECTILE_FIREBALL, px, py, vx, vy, player_id, damage, radius)
+                            
                     elif weaponType == WEAPON_CRYSTAL_STAFF:
-                        self.fire_crystal_staff(player)
+                        num = extra if extra > 0 else 1
+                        for i in range(num):
+                            angle = (i - (num-1)/2.0) * 0.2
+                            vx = math.cos(angle) * 600
+                            vy = math.sin(angle) * 600
+                            self.spawn_projectile(ENTITY_PROJECTILE, PROJECTILE_CRYSTAL, px, py, vx, vy, player_id, damage, radius)
+                            
                     elif weaponType == WEAPON_DEATH_AURA:
                         player["weapons_mask"] |= (1 << (weaponType - 1))
+                        
                     elif weaponType == WEAPON_BOMB_SHOES:
-                        self.fire_bomb_shoes(player)
+                        self.spawn_projectile(ENTITY_PROJECTILE, PROJECTILE_BOMB, px, py, 0, 0, player_id, damage, radius)
+                        
                     elif weaponType == WEAPON_NATURE_SPIKES:
-                        self.fire_nature_spikes(player)
+                        num = extra if extra > 0 else 3
+                        for _ in range(num):
+                            rx = px + random.uniform(-200, 200)
+                            ry = py + random.uniform(-200, 200)
+                            self.spawn_projectile(ENTITY_PROJECTILE, PROJECTILE_SPIKE, rx, ry, 0, 0, player_id, damage, radius)
 
         elif packetType == PACKET_ENTITY_DAMAGE:
             if address in self.players:
@@ -505,117 +528,27 @@ class Server:
                             del self.entities[crystalIndex]
                             self.broadcast_despawn(crystalIndex)
 
-    def fire_fireball_ring(self, player):
-        directions = [
-            (0, -1), # North
-            (0, 1),  # South
-            (1, 0),  # East
-            (-1, 0)  # West
-        ]
-        
-        for dx, dy in directions:
-            eIndex = self.nextEntityIndex
-            self.nextEntityIndex += 1
-            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
-                self.nextEntityIndex = MAX_PLAYERS
-            
-            self.entities[eIndex] = {
-                "type": ENTITY_PROJECTILE,
-                "charType": PROJECTILE_FIREBALL,
-                "position_x": player["position_x"],
-                "position_y": player["position_y"],
-                "velocity_x": dx * PROJECTILE_SPEED,
-                "velocity_y": dy * PROJECTILE_SPEED,
-                "spawnTime": time.time(),
-                "ownerID": player["identification"]
-            }
-            self.broadcast_spawn(eIndex)
 
-    def fire_crystal_staff(self, player):
-        # Find closest enemy
-        closest_enemy = None
-        min_dist = 999999
-        px, py = player["position_x"], player["position_y"]
-        
-        for index, entity in self.entities.items():
-            if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
-                dx = entity["position_x"] - px
-                dy = entity["position_y"] - py
-                dist = math.sqrt(dx*dx + dy*dy)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_enemy = entity
-        
-        if closest_enemy:
-            dx = closest_enemy["position_x"] - px
-            dy = closest_enemy["position_y"] - py
-            dist = math.sqrt(dx*dx + dy*dy)
-            vx, vy = (dx/dist) * CRYSTAL_SPEED, (dy/dist) * CRYSTAL_SPEED
-            
-            eIndex = self.nextEntityIndex
-            self.nextEntityIndex += 1
-            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
-                self.nextEntityIndex = MAX_PLAYERS
-            
-            self.entities[eIndex] = {
-                "type": ENTITY_PROJECTILE,
-                "charType": PROJECTILE_CRYSTAL,
-                "position_x": px,
-                "position_y": py,
-                "velocity_x": vx,
-                "velocity_y": vy,
-                "spawnTime": time.time(),
-                "ownerID": player["identification"]
-            }
-            self.broadcast_spawn(eIndex)
-
-    def fire_bomb_shoes(self, player):
+    def spawn_projectile(self, entType, projType, x, y, vx, vy, ownerID, damage=0, radius=0, extra=0):
         eIndex = self.nextEntityIndex
         self.nextEntityIndex += 1
         if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
             self.nextEntityIndex = MAX_PLAYERS
-        
+            
         self.entities[eIndex] = {
-            "type": ENTITY_PROJECTILE,
-            "charType": PROJECTILE_BOMB,
-            "position_x": player["position_x"],
-            "position_y": player["position_y"],
-            "velocity_x": 0,
-            "velocity_y": 0,
+            "type": entType,
+            "charType": projType,
+            "position_x": x,
+            "position_y": y,
+            "velocity_x": vx,
+            "velocity_y": vy,
             "spawnTime": time.time(),
-            "ownerID": player["identification"]
+            "ownerID": ownerID,
+            "health": damage,
+            "max_health": radius,
+            "extraParam": extra
         }
         self.broadcast_spawn(eIndex)
-
-    def fire_nature_spikes(self, player):
-        # Find random enemy in range
-        enemies_in_range = []
-        px, py = player["position_x"], player["position_y"]
-        for index, entity in self.entities.items():
-            if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
-                dx = entity["position_x"] - px
-                dy = entity["position_y"] - py
-                if math.sqrt(dx*dx + dy*dy) < 1000:
-                    enemies_in_range.append(entity)
-        
-        if enemies_in_range:
-            target = random.choice(enemies_in_range)
-            eIndex = self.nextEntityIndex
-            self.nextEntityIndex += 1
-            if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
-                self.nextEntityIndex = MAX_PLAYERS
-            
-            self.entities[eIndex] = {
-                "type": ENTITY_PROJECTILE,
-                "charType": PROJECTILE_SPIKE,
-                "position_x": target["position_x"],
-                "position_y": target["position_y"],
-                "velocity_x": 0,
-                "velocity_y": 0,
-                "spawnTime": time.time(),
-                "ownerID": player["identification"]
-            }
-            self.broadcast_spawn(eIndex)
 
     def spawn_explosion(self, x, y, radius, owner_id):
         eIndex = self.nextEntityIndex
@@ -649,7 +582,8 @@ class Server:
                             entity["position_x"], entity["position_y"],
                             entity.get("targetPlayerID", 0) if entity["type"] == ENTITY_CHARACTER else entity.get("ownerID", 0),
                             entity.get("velocity_x", 0), entity.get("velocity_y", 0),
-                            entity.get("health", 0.0), entity.get("max_health", 0.0))
+                            entity.get("health", 0.0), entity.get("max_health", 0.0),
+                            entity.get("extraParam", 0))
 
     def broadcast_spawn(self, entityIndex):
         packet = self.get_spawn_packet(entityIndex)

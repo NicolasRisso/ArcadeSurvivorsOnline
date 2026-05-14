@@ -8,9 +8,20 @@ ConnectionState currentConnectionState = { 0 };
 
 f32 playerXP = 0.0f;
 f32 xpToNextLevel = 100.0f;
-int playerLevel = 1;
+u16 playerLevel = 1;
 
 void DrawXPBar(void);
+
+// --- Level Up / Weapon System State ---
+bool isChoosingUpgrade = false;
+LevelUpOption upgradeOptions[3];
+int pendingLevels = 0;
+
+void Weapon_Initialize(Weapon* w, WeaponType type);
+void Weapon_Upgrade(Weapon* w);
+void GenerateUpgradeOptions(LevelUpOption options[3]);
+void ApplyUpgrade(int optionIndex);
+void DrawUpgradeCards(void);
 
 // --- Main Entry Point ---
 int main(void) {
@@ -21,18 +32,15 @@ int main(void) {
         return 1;
     }
 
-    // Initialize player weapons
+    // Initialize player weapons - Start with 1 random weapon
     for (int i = 0; i < 5; i++) {
-        globalVariables.playerWeapons[i].type = (WeaponType)(i + 1);
-        globalVariables.playerWeapons[i].cooldownTimer = 0.0f;
-        globalVariables.playerWeapons[i].level = 1;
-        
-        // Update local mask
-        if (globalVariables.playerWeapons[i].type != WEAPON_UNDEFINED) {
-            // Wait, we need a way to set the local mask. 
-            // We'll just assume local player has all for now in Render.
-        }
+        globalVariables.playerWeapons[i].type = WEAPON_UNDEFINED;
     }
+    
+    // Use current time as seed for randomness
+    srand(time(NULL));
+    WeaponType startingType = (WeaponType)((rand() % 5) + 1);
+    Weapon_Initialize(&globalVariables.playerWeapons[0], startingType);
 
     Camera2D camera = { 0 };
     camera.target = currentConnectionState.localPosition;
@@ -100,11 +108,19 @@ int main(void) {
                         playerLevel++;
                         playerXP -= xpToNextLevel;
                         xpToNextLevel *= 1.2f; // Increase difficulty
+                        pendingLevels++;
                     }
                     Network_SendXPCollect(&currentConnectionState, entityIndex);
                     entity->entityType = ENTITY_UNDEFINED; // Remove locally immediately
                 }
             }
+        }
+
+        // Trigger Upgrade Menu if pending levels
+        if (pendingLevels > 0 && !isChoosingUpgrade) {
+            GenerateUpgradeOptions(upgradeOptions);
+            isChoosingUpgrade = true;
+            pendingLevels--;
         }
 
         camera.target = currentConnectionState.localPosition;
@@ -160,6 +176,7 @@ int main(void) {
             
             // UI Overlay
             DrawXPBar();
+            if (isChoosingUpgrade) DrawUpgradeCards();
             DrawFPS(10, 10);
             if (!currentConnectionState.isConnected) {
                 DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
@@ -263,7 +280,7 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 
 // --- Weapon System Implementation ---
 void Weapons_Update(f32 deltaTime) {
-    if (!currentConnectionState.isConnected) return;
+    if (!currentConnectionState.isConnected || isChoosingUpgrade) return;
 
     for (i32 i = 0; i < 5; i++) {
         Weapon* weapon = &globalVariables.playerWeapons[i];
@@ -271,7 +288,15 @@ void Weapons_Update(f32 deltaTime) {
         
         weapon->cooldownTimer -= deltaTime;
         if (weapon->cooldownTimer <= 0) {
-            Network_SendWeaponFire(&currentConnectionState, weapon->type);
+            f32 dmg = weapon->stats.damage;
+            f32 rad = weapon->stats.size;
+            i32 extra = 0;
+            
+            if (weapon->type == WEAPON_CRYSTAL_STAFF) extra = weapon->stats.spec.crystalStaff.projectileAmount;
+            else if (weapon->type == WEAPON_FIREBALL_RING) rad = weapon->stats.spec.fireball.explosionSize;
+            else if (weapon->type == WEAPON_NATURE_SPIKES) extra = weapon->stats.spec.natureSpikes.spikeAmount;
+            
+            Network_SendWeaponFire(&currentConnectionState, (u8)weapon->type, dmg, rad, extra);
             
             if (weapon->type == WEAPON_DEATH_AURA) {
                 // Death Aura Logic: Check enemies in radius and deal damage
@@ -279,9 +304,9 @@ void Weapons_Update(f32 deltaTime) {
                 for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {
                     Entity* enemy = &currentConnectionState.remoteEntities[enemyIndex];
                     if (enemy->entityType == ENTITY_CHARACTER && enemy->character.characterType == CHARACTER_ENEMY) {
-                        if (CheckCollisionCircles(currentConnectionState.localPosition, AURA_RADIUS, enemy->character.position, PLAYER_RADIUS)) {
-                            Network_SendDamage(&currentConnectionState, enemyIndex, 7.5f); // DAMAGE_AURA
-                            enemy->character.health -= 7.5f; // Local Prediction
+                        if (CheckCollisionCircles(currentConnectionState.localPosition, weapon->stats.size, enemy->character.position, PLAYER_RADIUS)) {
+                            Network_SendDamage(&currentConnectionState, enemyIndex, weapon->stats.damage);
+                            enemy->character.health -= weapon->stats.damage; // Local Prediction
                             hitCount++;
                             if (hitCount >= 100) break;
                         }
@@ -289,14 +314,7 @@ void Weapons_Update(f32 deltaTime) {
                 }
             }
             
-            switch (weapon->type) {
-                case WEAPON_FIREBALL_RING: weapon->cooldownTimer = FIREBALL_COOLDOWN; break;
-                case WEAPON_CRYSTAL_STAFF: weapon->cooldownTimer = CRYSTAL_COOLDOWN; break;
-                case WEAPON_DEATH_AURA: weapon->cooldownTimer = 0.1f; break; // Damage interval
-                case WEAPON_BOMB_SHOES: weapon->cooldownTimer = BOMB_COOLDOWN; break;
-                case WEAPON_NATURE_SPIKES: weapon->cooldownTimer = SPIKE_COOLDOWN; break;
-                default: weapon->cooldownTimer = 1.0f; break;
-            }
+            weapon->cooldownTimer = weapon->stats.attackSpeed;
         }
     }
 }
@@ -305,7 +323,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
     for (i32 i = 0; i < MAX_REMOTE_ENTITIES; i++) {
         Entity* entity = &currentConnectionState.remoteEntities[i];
         if (entity->entityType == ENTITY_PROJECTILE) {
-            Projectile* proj = &entity->projectile;
+            Projectile* proj = &entity->proj;
             
             // Move
             proj->position.x += proj->velocity.x * deltaTime;
@@ -447,6 +465,13 @@ void Input_Update(InputState* state) {
         state->movementDirection = Vector2Normalize(state->movementDirection);
     }
     
+    // Handle Weapon Selection if active
+    if (isChoosingUpgrade) {
+        if (IsKeyPressed(KEY_ONE)) { ApplyUpgrade(0); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_TWO)) { ApplyUpgrade(1); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_THREE)) { ApplyUpgrade(2); isChoosingUpgrade = false; }
+    }
+
     state->quitApplication = WindowShouldClose();
 }
 
@@ -472,33 +497,33 @@ void Render_Entity(const Entity* entity) {
             }
             break;
         case ENTITY_PROJECTILE:
-            if (entity->projectile.type == PROJECTILE_FIREBALL) {
-                DrawCircleV(entity->projectile.position, 10, ORANGE);
-                DrawCircleV(entity->projectile.position, 6, YELLOW);
-            } else if (entity->projectile.type == PROJECTILE_CRYSTAL) {
-                DrawCircleV(entity->projectile.position, 8, SKYBLUE);
-                DrawCircleV(entity->projectile.position, 4, WHITE);
-            } else if (entity->projectile.type == PROJECTILE_BOMB) {
-                DrawCircleV(entity->projectile.position, 12, BLACK);
-                DrawCircleV(entity->projectile.position, 6, RED);
+            if (entity->proj.type == PROJECTILE_FIREBALL) {
+                DrawCircleV(entity->proj.position, 10, ORANGE);
+                DrawCircleV(entity->proj.position, 6, YELLOW);
+            } else if (entity->proj.type == PROJECTILE_CRYSTAL) {
+                DrawCircleV(entity->proj.position, 8, SKYBLUE);
+                DrawCircleV(entity->proj.position, 4, WHITE);
+            } else if (entity->proj.type == PROJECTILE_BOMB) {
+                DrawCircleV(entity->proj.position, 12, BLACK);
+                DrawCircleV(entity->proj.position, 6, RED);
                 // Draw explosion radius preview if about to explode
-                if (entity->projectile.lifetime < 1.0f) {
-                    DrawCircleLinesV(entity->projectile.position, BOMB_RADIUS, Fade(RED, 0.5f));
+                if (entity->proj.lifetime < 1.0f) {
+                    DrawCircleLinesV(entity->proj.position, BOMB_RADIUS, Fade(RED, 0.5f));
                 }
-            } else if (entity->projectile.type == PROJECTILE_SPIKE) {
-                DrawTriangle((Vector2){entity->projectile.position.x, entity->projectile.position.y - 20},
-                             (Vector2){entity->projectile.position.x - 15, entity->projectile.position.y + 10},
-                             (Vector2){entity->projectile.position.x + 15, entity->projectile.position.y + 10}, BROWN);
-                DrawTriangle((Vector2){entity->projectile.position.x, entity->projectile.position.y - 25},
-                             (Vector2){entity->projectile.position.x - 10, entity->projectile.position.y + 5},
-                             (Vector2){entity->projectile.position.x + 10, entity->projectile.position.y + 5}, GRAY);
-            } else if (entity->projectile.type == PROJECTILE_EXPLOSION) {
-                f32 scale = entity->projectile.lifetime / 0.5f; // lifetime goes from 0.5 to 0
-                f32 radius = entity->projectile.radius;
+            } else if (entity->proj.type == PROJECTILE_SPIKE) {
+                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 20},
+                             (Vector2){entity->proj.position.x - 15, entity->proj.position.y + 10},
+                             (Vector2){entity->proj.position.x + 15, entity->proj.position.y + 10}, BROWN);
+                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 25},
+                             (Vector2){entity->proj.position.x - 10, entity->proj.position.y + 5},
+                             (Vector2){entity->proj.position.x + 10, entity->proj.position.y + 5}, GRAY);
+            } else if (entity->proj.type == PROJECTILE_EXPLOSION) {
+                f32 scale = entity->proj.lifetime / 0.5f; // lifetime goes from 0.5 to 0
+                f32 radius = entity->proj.radius;
                 if (radius <= 0) radius = BOMB_RADIUS; // Fallback
                 
-                DrawCircleV(entity->projectile.position, radius * (1.0f - scale), Fade(ORANGE, scale));
-                DrawCircleV(entity->projectile.position, (radius * 0.6f) * (1.0f - scale), Fade(YELLOW, scale));
+                DrawCircleV(entity->proj.position, radius * (1.0f - scale), Fade(ORANGE, scale));
+                DrawCircleV(entity->proj.position, (radius * 0.6f) * (1.0f - scale), Fade(YELLOW, scale));
             }
             break;
         case ENTITY_XP_CRYSTAL:
@@ -532,4 +557,156 @@ void DrawXPBar(void) {
     DrawRectangleLines(x, y, barWidth, barHeight, WHITE);
     
     DrawText(TextFormat("LV %d", playerLevel), (int)x, (int)(y + barHeight + 5), 20, WHITE);
+}
+
+// --- Weapon System Implementation ---
+void Weapon_Initialize(Weapon* w, WeaponType type) {
+    w->type = type;
+    w->level = 1;
+    w->cooldownTimer = 0.0f;
+    
+    switch (type) {
+        case WEAPON_CRYSTAL_STAFF:
+            w->stats.damage = 100.0f;
+            w->stats.attackSpeed = 1.5f;
+            w->stats.spec.crystalStaff.pierce = 1;
+            w->stats.spec.crystalStaff.projectileAmount = 1;
+            break;
+        case WEAPON_DEATH_AURA:
+            w->stats.damage = 15.0f;
+            w->stats.attackSpeed = 0.2f;
+            w->stats.size = AURA_RADIUS;
+            break;
+        case WEAPON_FIREBALL_RING:
+            w->stats.damage = 50.0f;
+            w->stats.attackSpeed = 2.0f;
+            w->stats.spec.fireball.explosionSize = FIREBALL_RADIUS;
+            break;
+        case WEAPON_NATURE_SPIKES:
+            w->stats.damage = 20.0f;
+            w->stats.attackSpeed = 2.5f;
+            w->stats.spec.natureSpikes.damageCap = 150.0f;
+            w->stats.spec.natureSpikes.spikeAmount = 3;
+            w->stats.size = 1.0f;
+            break;
+        case WEAPON_BOMB_SHOES:
+            w->stats.damage = 500.0f;
+            w->stats.attackSpeed = 3.0f;
+            w->stats.size = BOMB_RADIUS;
+            break;
+        case WEAPON_UNDEFINED: break;
+    }
+}
+
+void Weapon_Upgrade(Weapon* w) {
+    if (w->level >= 15) return;
+    w->level++;
+    
+    // Scale stats
+    w->stats.damage *= 1.2f;
+    
+    switch (w->type) {
+        case WEAPON_CRYSTAL_STAFF:
+            if (w->level % 3 == 0) w->stats.spec.crystalStaff.projectileAmount++;
+            if (w->level % 4 == 0) w->stats.spec.crystalStaff.pierce++;
+            w->stats.attackSpeed *= 0.95f;
+            break;
+        case WEAPON_DEATH_AURA:
+            w->stats.size += 15.0f;
+            w->stats.attackSpeed -= 0.007f; // Toward 0.1s
+            if (w->stats.attackSpeed < 0.1f) w->stats.attackSpeed = 0.1f;
+            break;
+        case WEAPON_FIREBALL_RING:
+            w->stats.spec.fireball.explosionSize += 10.0f;
+            w->stats.attackSpeed *= 0.95f;
+            break;
+        case WEAPON_NATURE_SPIKES:
+            w->stats.spec.natureSpikes.spikeAmount++;
+            w->stats.spec.natureSpikes.damageCap += 50.0f;
+            w->stats.size += 0.1f;
+            break;
+        case WEAPON_BOMB_SHOES:
+            w->stats.size += 20.0f;
+            w->stats.attackSpeed *= 0.95f;
+            break;
+        case WEAPON_UNDEFINED: break;
+    }
+}
+
+void GenerateUpgradeOptions(LevelUpOption options[3]) {
+    WeaponType types[5] = { WEAPON_FIREBALL_RING, WEAPON_CRYSTAL_STAFF, WEAPON_DEATH_AURA, WEAPON_BOMB_SHOES, WEAPON_NATURE_SPIKES };
+    const char* names[6] = { "", "Fireball", "Crystal Staff", "Death Aura", "Bomb Shoes", "Nature Spikes" };
+    const char* descs[6] = { "", "Fiery explosions", "Piercing crystals", "Continuous damage aura", "Delayed explosions", "Spikes from the earth" };
+    Color colors[6] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
+
+    // Randomize 3 different options
+    for (int i = 0; i < 3; i++) {
+        int idx = rand() % 5;
+        options[i].type = types[idx];
+        options[i].name = names[options[i].type];
+        options[i].description = descs[options[i].type];
+        options[i].color = colors[options[i].type];
+    }
+}
+
+void ApplyUpgrade(int optionIndex) {
+    WeaponType type = upgradeOptions[optionIndex].type;
+    
+    // Check if we already have it
+    for (int i = 0; i < 5; i++) {
+        if (globalVariables.playerWeapons[i].type == type) {
+            Weapon_Upgrade(&globalVariables.playerWeapons[i]);
+            return;
+        }
+    }
+    
+    // Find empty slot
+    for (int i = 0; i < 5; i++) {
+        if (globalVariables.playerWeapons[i].type == WEAPON_UNDEFINED) {
+            Weapon_Initialize(&globalVariables.playerWeapons[i], type);
+            return;
+        }
+    }
+}
+
+void DrawUpgradeCards(void) {
+    float cardWidth = 250.0f;
+    float cardHeight = 350.0f;
+    float spacing = 40.0f;
+    float startX = (SCREEN_WIDTH - (cardWidth * 3 + spacing * 2)) / 2.0f;
+    float startY = SCREEN_HEIGHT - cardHeight - 50.0f;
+    
+    for (int i = 0; i < 3; i++) {
+        Rectangle card = { startX + i * (cardWidth + spacing), startY, cardWidth, cardHeight };
+        
+        // Draw card background
+        DrawRectangleRec(card, Fade(DARKGRAY, 0.9f));
+        DrawRectangleLinesEx(card, 2, WHITE);
+        
+        // Draw Header
+        DrawText(TextFormat("[%d]", i + 1), card.x + 10, card.y + 10, 20, YELLOW);
+        DrawText(upgradeOptions[i].name, card.x + 50, card.y + 10, 20, WHITE);
+        
+        // Find current level if owned
+        int currentLv = 0;
+        for (int j = 0; j < 5; j++) {
+            if (globalVariables.playerWeapons[j].type == upgradeOptions[i].type) {
+                currentLv = globalVariables.playerWeapons[j].level;
+                break;
+            }
+        }
+        
+        if (currentLv > 0) {
+            DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 40, 16, GREEN);
+        } else {
+            DrawText("NEW WEAPON", card.x + 10, card.y + 40, 16, SKYBLUE);
+        }
+        
+        // Draw Image Placeholder
+        DrawRectangle(card.x + 50, card.y + 80, cardWidth - 100, 150, upgradeOptions[i].color);
+        DrawRectangleLines(card.x + 50, card.y + 80, cardWidth - 100, 150, WHITE);
+        
+        // Draw Description
+        DrawText(upgradeOptions[i].description, card.x + 10, card.y + 250, 14, GRAY);
+    }
 }
