@@ -267,11 +267,6 @@ void Projectile_UpdateMovement(f32 deltaTime) {
             
             // Lifetime (Predicted locally)
             proj->lifetime -= deltaTime;
-            if (proj->lifetime <= 0) {
-                entity->entityType = ENTITY_UNDEFINED;
-                continue;
-            }
-
             // Collision check with enemies (Client prediction)
             if (proj->type == PROJECTILE_FIREBALL) {
                 for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {
@@ -361,6 +356,11 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                     if (proj->damageAccumulated >= 150.0f) entity->entityType = ENTITY_UNDEFINED;
                     proj->tickTimer = 0;
                 }
+            }
+
+            // Lifetime expiry (Predicted locally)
+            if (proj->lifetime <= 0 && entity->entityType != ENTITY_UNDEFINED) {
+                entity->entityType = ENTITY_UNDEFINED;
             }
         }
     }
