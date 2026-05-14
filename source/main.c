@@ -6,6 +6,12 @@ GlobalVariables globalVariables = { 0 };
 InputState currentInputState = { 0 };
 ConnectionState currentConnectionState = { 0 };
 
+f32 playerXP = 0.0f;
+f32 xpToNextLevel = 100.0f;
+int playerLevel = 1;
+
+void DrawXPBar(void);
+
 // --- Main Entry Point ---
 int main(void) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Arcade Survivors Online");
@@ -63,6 +69,44 @@ int main(void) {
         Network_SendDeathReport(&currentConnectionState);
         Network_SendDamageBatch(&currentConnectionState);
 
+        // Update XP Crystals (Magnetization and Collection)
+        for (i32 entityIndex = MAX_PLAYERS + MAX_ENEMIES; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
+            Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+            if (entity->entityType == ENTITY_XP_CRYSTAL) {
+                float dist = Vector2Distance(entity->xpCrystal.position, currentConnectionState.localPosition);
+                
+                if (entity->xpCrystal.isMagnetized || dist < MAGNET_RADIUS) {
+                    if (!entity->xpCrystal.isMagnetized) {
+                        entity->xpCrystal.isMagnetized = true;
+                        entity->xpCrystal.magnetizedTimer = 0.0f;
+                    }
+
+                    entity->xpCrystal.magnetizedTimer += deltaTime;
+                    float alpha = entity->xpCrystal.magnetizedTimer / 1.0f;
+                    if (alpha > 1.0f) alpha = 1.0f;
+                    float easedAlpha = alpha * alpha; // Ease-in
+
+                    // Ease-in movement towards player
+                    Vector2 dir = Vector2Normalize(Vector2Subtract(currentConnectionState.localPosition, entity->xpCrystal.position));
+                    float speed = easedAlpha * (PLAYER_SPEED * 1.5f);
+                    entity->xpCrystal.position.x += dir.x * speed * deltaTime;
+                    entity->xpCrystal.position.y += dir.y * speed * deltaTime;
+                }
+                
+                if (dist < COLLECT_RADIUS) {
+                    // Collect!
+                    playerXP += entity->xpCrystal.xpValue;
+                    if (playerXP >= xpToNextLevel) {
+                        playerLevel++;
+                        playerXP -= xpToNextLevel;
+                        xpToNextLevel *= 1.2f; // Increase difficulty
+                    }
+                    Network_SendXPCollect(&currentConnectionState, entityIndex);
+                    entity->entityType = ENTITY_UNDEFINED; // Remove locally immediately
+                }
+            }
+        }
+
         camera.target = currentConnectionState.localPosition;
 
         BeginDrawing();
@@ -102,7 +146,6 @@ int main(void) {
                     DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
                     
                     // Draw local player's death aura
-                    // (We can use a local mask or just check weapons)
                     for (int i = 0; i < 5; i++) {
                         if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
                             DrawCircleLinesV(currentConnectionState.localPosition, AURA_RADIUS, Fade(BLACK, 0.3f));
@@ -116,6 +159,7 @@ int main(void) {
             EndMode2D();
             
             // UI Overlay
+            DrawXPBar();
             DrawFPS(10, 10);
             if (!currentConnectionState.isConnected) {
                 DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
@@ -457,6 +501,11 @@ void Render_Entity(const Entity* entity) {
                 DrawCircleV(entity->projectile.position, (radius * 0.6f) * (1.0f - scale), Fade(YELLOW, scale));
             }
             break;
+        case ENTITY_XP_CRYSTAL:
+            DrawPoly(entity->xpCrystal.position, 4, 12, 45, SKYBLUE);
+            DrawPoly(entity->xpCrystal.position, 4, 8, 45, BLUE);
+            DrawPoly(entity->xpCrystal.position, 4, 4, 45, WHITE);
+            break;
         default:
             break;
     }
@@ -468,4 +517,19 @@ void Render_Map(void) {
         DrawLine(gridIndex, -MAP_SIZE/2, gridIndex, MAP_SIZE/2, LIGHTGRAY);
         DrawLine(-MAP_SIZE/2, gridIndex, MAP_SIZE/2, gridIndex, LIGHTGRAY);
     }
+}
+
+void DrawXPBar(void) {
+    float barWidth = SCREEN_WIDTH * 0.8f;
+    float barHeight = 20.0f;
+    float x = (SCREEN_WIDTH - barWidth) / 2.0f;
+    float y = 20.0f;
+    
+    float progress = (float)playerXP / xpToNextLevel;
+    
+    DrawRectangle(x, y, barWidth, barHeight, Fade(DARKBLUE, 0.5f));
+    DrawRectangle(x, y, barWidth * progress, barHeight, SKYBLUE);
+    DrawRectangleLines(x, y, barWidth, barHeight, WHITE);
+    
+    DrawText(TextFormat("LV %d", playerLevel), (int)x, (int)(y + barHeight + 5), 20, WHITE);
 }

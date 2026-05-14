@@ -9,10 +9,13 @@ SERVER_IP = "0.0.0.0"
 SERVER_PORT = 12345
 HEARTBEAT_TIMEOUT = 30.0
 MAX_ENEMIES = 3000
+MAX_XP_CRYSTALS = 2000
 MAX_PLAYERS = 4
 SNAPSHOT_CYCLE_TIME = 2.5
 SNAPSHOT_TICKS = 50 # 2.5s / 0.05s
 BATCH_SIZE = MAX_ENEMIES // SNAPSHOT_TICKS
+XP_START_INDEX = MAX_PLAYERS + MAX_ENEMIES
+XP_END_INDEX = XP_START_INDEX + MAX_XP_CRYSTALS
 
 # Packet Types
 PACKET_ID_REQUEST = 0
@@ -29,6 +32,7 @@ PACKET_WEAPON_FIRE = 10
 PACKET_ENTITY_DAMAGE = 11
 PACKET_PROJECTILE_EXPLODE = 12
 PACKET_DAMAGE_BATCH = 13
+PACKET_XP_COLLECT = 14
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
@@ -69,6 +73,7 @@ CHARACTER_ENEMY = 2
 ENTITY_UNDEFINED = 0
 ENTITY_CHARACTER = 1
 ENTITY_PROJECTILE = 2
+ENTITY_XP_CRYSTAL = 3
 
 # Weapon Types
 WEAPON_UNDEFINED = 0
@@ -106,6 +111,7 @@ ENTITY_DESPAWN_FORMAT = HEADER_FORMAT + "I"
 WEAPON_FIRE_FORMAT = HEADER_FORMAT + "B"
 ENTITY_DAMAGE_FORMAT = HEADER_FORMAT + "If"
 PACKET_PROJECTILE_EXPLODE_FORMAT = HEADER_FORMAT + "I"
+PACKET_XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
 
 class Server:
     def __init__(self):
@@ -415,9 +421,10 @@ class Server:
                         if eIndex in self.entities:
                             # Verify it's an enemy (security)
                             if self.entities[eIndex]["charType"] == CHARACTER_ENEMY:
-                                self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                ex, ey = self.entities[eIndex]["position_x"], self.entities[eIndex]["position_y"]
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
+                                self.spawn_xp_crystal(ex, ey)
 
         elif packetType == PACKET_DAMAGE_BATCH:
             if address in self.players:
@@ -434,9 +441,10 @@ class Server:
                             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                                 entity["health"] -= damage
                                 if entity["health"] <= 0:
-                                    self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                    ex, ey = entity["position_x"], entity["position_y"]
                                     del self.entities[eIndex]
                                     self.broadcast_despawn(eIndex)
+                                    self.spawn_xp_crystal(ex, ey)
                                 else:
                                     self.broadcast_damage(eIndex, damage, playerIdentification)
 
@@ -466,9 +474,11 @@ class Server:
                         if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                             entity["health"] -= damage
                             if entity["health"] <= 0:
+                                ex, ey = entity["position_x"], entity["position_y"]
                                 self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
+                                self.spawn_xp_crystal(ex, ey)
                             else:
                                 self.broadcast_damage(eIndex, damage, playerIdentification)
                         elif entity["type"] == ENTITY_PROJECTILE and entity["charType"] == PROJECTILE_FIREBALL:
@@ -484,6 +494,16 @@ class Server:
                             self.spawn_explosion(proj["position_x"], proj["position_y"], FIREBALL_RADIUS, proj.get("ownerID", 0))
                             del self.entities[projectileIndex]
                             self.broadcast_despawn(projectileIndex)
+
+        elif packetType == PACKET_XP_COLLECT:
+            if address in self.players:
+                if len(data) >= struct.calcsize(PACKET_XP_COLLECT_FORMAT):
+                    _, _, _, crystalIndex = struct.unpack(PACKET_XP_COLLECT_FORMAT, data[:struct.calcsize(PACKET_XP_COLLECT_FORMAT)])
+                    if crystalIndex in self.entities:
+                        if self.entities[crystalIndex]["type"] == ENTITY_XP_CRYSTAL:
+                            self.log(f"XP Crystal {crystalIndex} collected by player {playerIdentification}")
+                            del self.entities[crystalIndex]
+                            self.broadcast_despawn(crystalIndex)
 
     def fire_fireball_ring(self, player):
         directions = [
@@ -625,7 +645,7 @@ class Server:
     def get_spawn_packet(self, entityIndex):
         entity = self.entities[entityIndex]
         return struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
-                            entityIndex, entity["type"], entity["charType"], 
+                            entityIndex, entity["type"], entity.get("charType", 0), 
                             entity["position_x"], entity["position_y"],
                             entity.get("targetPlayerID", 0) if entity["type"] == ENTITY_CHARACTER else entity.get("ownerID", 0),
                             entity.get("velocity_x", 0), entity.get("velocity_y", 0),
@@ -640,6 +660,41 @@ class Server:
         packet = struct.pack(ENTITY_DESPAWN_FORMAT, PACKET_ENTITY_DESPAWN, 0, time.time(), entityIndex)
         for address in self.players:
             self.serverSocket.sendto(packet, address)
+
+    def spawn_xp_crystal(self, x, y):
+        # 1. Try to find a free slot in the XP range
+        free_index = -1
+        nearest_index = -1
+        min_dist = 999999
+        
+        for i in range(XP_START_INDEX, XP_END_INDEX):
+            if i not in self.entities:
+                if free_index == -1: free_index = i
+            else:
+                # Calculate distance for potential merge (if pool full or very close)
+                dist_sq = (self.entities[i]["position_x"] - x)**2 + (self.entities[i]["position_y"] - y)**2
+                if dist_sq < min_dist:
+                    min_dist = dist_sq
+                    nearest_index = i
+        
+        # 2. Merging logic: if pool full or extremely close (40 units)
+        if (free_index == -1 and nearest_index != -1) or (nearest_index != -1 and min_dist < 40**2):
+            self.entities[nearest_index]["health"] += 20.0
+            # Broadcast a spawn update to let clients know the value changed (health field)
+            self.broadcast_spawn(nearest_index)
+            return
+
+        # 3. Spawn new one if space
+        if free_index != -1:
+            self.entities[free_index] = {
+                "type": ENTITY_XP_CRYSTAL,
+                "charType": 0,
+                "position_x": x,
+                "position_y": y,
+                "health": 20.0, # Using health field for XP amount
+                "spawnTime": time.time()
+            }
+            self.broadcast_spawn(free_index)
 
     def broadcast_world_state_snapshot(self):
         currentTime = time.time()

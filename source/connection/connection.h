@@ -25,11 +25,12 @@ typedef enum {
     PACKET_WEAPON_FIRE = 10,
     PACKET_ENTITY_DAMAGE = 11,
     PACKET_PROJECTILE_EXPLODE = 12,
-    PACKET_DAMAGE_BATCH = 13
+    PACKET_DAMAGE_BATCH = 13,
+    PACKET_XP_COLLECT = 14
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
-#define MAX_REMOTE_ENTITIES 3100
+#define MAX_REMOTE_ENTITIES 5100
 #define MAX_PACKET_SIZE 4096
 
 #pragma pack(push, 1)
@@ -130,6 +131,11 @@ typedef struct {
     DamageEntry entries[128];
 } PacketDamageBatch;
 
+typedef struct {
+    PacketHeader header;
+    u32 crystalIndex;
+} PacketXPCollect;
+
 #pragma pack(pop)
 
 typedef struct {
@@ -159,6 +165,7 @@ void Network_SendDeathReport(ConnectionState* state);
 void Network_SendWeaponFire(ConnectionState* state, WeaponType type);
 void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage);
 void Network_SendDamageBatch(ConnectionState* state);
+void Network_SendXPCollect(ConnectionState* state, u32 crystalIndex);
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex);
 void Network_QueueDeath(ConnectionState* state, u32 enemyID);
 void Network_CloseConnection();

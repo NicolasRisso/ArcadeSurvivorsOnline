@@ -7,6 +7,14 @@
 #include "raymath.h"
 
 // Global Values
+#define MAX_REMOTE_ENTITIES 5100
+#define MAX_ENEMIES 3000
+#define MAX_XP_CRYSTALS 2000
+#define MAX_PLAYERS 4
+
+#define MAGNET_RADIUS 200.0f
+#define COLLECT_RADIUS 30.0f
+#define XP_PER_CRYSTAL 20.0f
 #define MAP_SIZE 10000.0f
 #define PLAYER_SPEED 300.0f
 #define PLAYER_RADIUS 20.0f
@@ -41,7 +49,8 @@ typedef struct u16Range { u16 minimum; u16 maximum; } u16Range;
 typedef enum EntityType : u8 {
     ENTITY_UNDEFINED = 0,
     ENTITY_CHARACTER = 1,
-    ENTITY_PROJECTILE = 2
+    ENTITY_PROJECTILE = 2,
+    ENTITY_XP_CRYSTAL = 3
 } EntityType;
 
 typedef enum ProjectileType : u8 {
@@ -94,6 +103,14 @@ typedef struct Projectile {
     u8 hitCount;
 } Projectile;
 
+typedef struct XPCrystal {
+    Vector2 position;
+    f32 xpValue;
+    bool isMagnetized;
+    f32 magnetizedTimer;
+    u32 targetPlayerID;
+} XPCrystal;
+
 typedef struct VisualEffect {
     Vector2 position;
     f32 radius;
@@ -112,6 +129,7 @@ typedef struct Entity{
     union { 
         Character character; 
         Projectile projectile;
+        XPCrystal xpCrystal;
     };
 } Entity;
 

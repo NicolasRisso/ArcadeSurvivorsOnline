@@ -156,6 +156,13 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
 
                     printf("SPAWN: Projectile %u (Type %d) Vel: (%.1f, %.1f)\n", 
                            entityIndex, (int)connectionState->remoteEntities[entityIndex].projectile.type, spawn->velocity.x, spawn->velocity.y);
+                } else if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_XP_CRYSTAL) {
+                    connectionState->remoteEntities[entityIndex].xpCrystal.position = spawn->position;
+                    connectionState->remoteEntities[entityIndex].xpCrystal.xpValue = spawn->health;
+                    connectionState->remoteEntities[entityIndex].xpCrystal.isMagnetized = false;
+                    connectionState->remoteEntities[entityIndex].xpCrystal.magnetizedTimer = 0.0f;
+                    connectionState->remoteEntities[entityIndex].xpCrystal.targetPlayerID = 0;
+                    printf("SPAWN: XP Crystal %u (Value: %.1f)\n", entityIndex, spawn->health);
                 }
                 break;
             }
@@ -318,6 +325,18 @@ void Network_SendDamageBatch(ConnectionState* state) {
         memmove(state->pendingDamage, state->pendingDamage + batchCount, (state->pendingDamageCount - batchCount) * sizeof(DamageEntry));
     }
     state->pendingDamageCount -= batchCount;
+}
+
+void Network_SendXPCollect(ConnectionState* state, u32 crystalIndex) {
+    if (!state->isConnected) return;
+
+    PacketXPCollect xpPacket;
+    xpPacket.header.type = PACKET_XP_COLLECT;
+    xpPacket.header.playerIdentification = state->localPlayerIdentification;
+    xpPacket.header.timestamp = GetTime();
+    xpPacket.crystalIndex = crystalIndex;
+
+    sendto(clientSocket, (char*)&xpPacket, sizeof(xpPacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
 }
 
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex) {
