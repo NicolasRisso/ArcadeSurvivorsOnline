@@ -24,7 +24,8 @@ typedef enum {
     PACKET_ENTITY_DESPAWN = 9,
     PACKET_WEAPON_FIRE = 10,
     PACKET_ENTITY_DAMAGE = 11,
-    PACKET_PROJECTILE_EXPLODE = 12
+    PACKET_PROJECTILE_EXPLODE = 12,
+    PACKET_DAMAGE_BATCH = 13
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
@@ -118,6 +119,17 @@ typedef struct {
     u32 projectileIndex;
 } PacketProjectileExplode;
 
+typedef struct {
+    u32 entityIndex;
+    f32 damage;
+} DamageEntry;
+
+typedef struct {
+    PacketHeader header;
+    u32 count;
+    DamageEntry entries[128];
+} PacketDamageBatch;
+
 #pragma pack(pop)
 
 typedef struct {
@@ -133,6 +145,9 @@ typedef struct {
 
     u32 pendingKills[512];
     u32 pendingKillsCount;
+
+    DamageEntry pendingDamage[512];
+    u32 pendingDamageCount;
     
     VisualEffect localVisualEffects[128];
 } ConnectionState;
@@ -143,6 +158,7 @@ void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
 void Network_SendDeathReport(ConnectionState* state);
 void Network_SendWeaponFire(ConnectionState* state, WeaponType type);
 void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage);
+void Network_SendDamageBatch(ConnectionState* state);
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex);
 void Network_QueueDeath(ConnectionState* state, u32 enemyID);
 void Network_CloseConnection();

@@ -52,7 +52,7 @@ int main(void) {
                 entity->character.targetPosition.x += entity->character.velocity.x * deltaTime;
                 entity->character.targetPosition.y += entity->character.velocity.y * deltaTime;
                 
-                entity->character.position = Vector2Lerp(entity->character.position, entity->character.targetPosition, 0.1f);
+                entity->character.position = Vector2Lerp(entity->character.position, entity->character.targetPosition, 0.25f);
             }
         }
 
@@ -61,6 +61,7 @@ int main(void) {
         Weapons_Update(deltaTime);
         Projectile_UpdateMovement(deltaTime);
         Network_SendDeathReport(&currentConnectionState);
+        Network_SendDamageBatch(&currentConnectionState);
 
         camera.target = currentConnectionState.localPosition;
 
@@ -235,7 +236,8 @@ void Weapons_Update(f32 deltaTime) {
                     Entity* enemy = &currentConnectionState.remoteEntities[enemyIndex];
                     if (enemy->entityType == ENTITY_CHARACTER && enemy->character.characterType == CHARACTER_ENEMY) {
                         if (CheckCollisionCircles(currentConnectionState.localPosition, AURA_RADIUS, enemy->character.position, PLAYER_RADIUS)) {
-                            Network_SendDamage(&currentConnectionState, enemyIndex, 15.0f); // DAMAGE_AURA
+                            Network_SendDamage(&currentConnectionState, enemyIndex, 7.5f); // DAMAGE_AURA
+                            enemy->character.health -= 7.5f; // Local Prediction
                             hitCount++;
                             if (hitCount >= 100) break;
                         }
@@ -246,7 +248,7 @@ void Weapons_Update(f32 deltaTime) {
             switch (weapon->type) {
                 case WEAPON_FIREBALL_RING: weapon->cooldownTimer = FIREBALL_COOLDOWN; break;
                 case WEAPON_CRYSTAL_STAFF: weapon->cooldownTimer = CRYSTAL_COOLDOWN; break;
-                case WEAPON_DEATH_AURA: weapon->cooldownTimer = 0.2f; break; // Damage interval
+                case WEAPON_DEATH_AURA: weapon->cooldownTimer = 0.1f; break; // Damage interval
                 case WEAPON_BOMB_SHOES: weapon->cooldownTimer = BOMB_COOLDOWN; break;
                 case WEAPON_NATURE_SPIKES: weapon->cooldownTimer = SPIKE_COOLDOWN; break;
                 default: weapon->cooldownTimer = 1.0f; break;
@@ -290,6 +292,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                                 if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
                                     if (CheckCollisionCircles(proj->position, FIREBALL_RADIUS, other->character.position, PLAYER_RADIUS)) {
                                         Network_SendDamage(&currentConnectionState, otherIndex, 50.0f); // DAMAGE_FIREBALL
+                                        other->character.health -= 50.0f; // Local Prediction
                                     }
                                 }
                             }
@@ -312,6 +315,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                             }
                             if (!alreadyHit) {
                                 Network_SendDamage(&currentConnectionState, enemyIndex, 100.0f); // DAMAGE_CRYSTAL
+                                remoteEntity->character.health -= 100.0f; // Local Prediction
                                 if (proj->hitCount < 8) proj->hitEnemies[proj->hitCount++] = enemyIndex;
                             }
                         }
@@ -335,6 +339,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                         if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
                             if (CheckCollisionCircles(proj->position, BOMB_RADIUS, other->character.position, PLAYER_RADIUS)) {
                                 Network_SendDamage(&currentConnectionState, otherIndex, 500.0f); // DAMAGE_BOMB
+                                other->character.health -= 500.0f; // Local Prediction
                             }
                         }
                     }
@@ -349,6 +354,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                         if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
                             if (CheckCollisionCircles(proj->position, SPIKE_RADIUS, other->character.position, PLAYER_RADIUS)) {
                                 Network_SendDamage(&currentConnectionState, otherIndex, 20.0f); // DAMAGE_SPIKE
+                                other->character.health -= 20.0f; // Local Prediction
                                 proj->damageAccumulated += 20.0f;
                             }
                         }

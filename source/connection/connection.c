@@ -40,6 +40,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->lastHeartbeatReceived = GetTime();
     connectionState->lastVelocitySentTime = 0;
     connectionState->pendingKillsCount = 0;
+    connectionState->pendingDamageCount = 0;
 
     for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
         connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
@@ -162,9 +163,10 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 PacketEntityDamage* damagePacket = (PacketEntityDamage*)receiveBuffer;
                 u32 entityIndex = damagePacket->entityIndex % MAX_REMOTE_ENTITIES;
                 if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
-                    connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
-                    // NOTE: We no longer delete locally here to avoid desyncs. 
-                    // We wait for PACKET_ENTITY_DESPAWN from server.
+                    // Prediction: Ignore damage from ourselves (already applied)
+                    if (damagePacket->header.playerIdentification != connectionState->localPlayerIdentification) {
+                        connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
+                    }
                 }
                 break;
             }
@@ -287,16 +289,35 @@ void Network_SendWeaponFire(ConnectionState* state, WeaponType type) {
 }
 
 void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage) {
-    if (!state->isConnected) return;
+    if (state->pendingDamageCount < 512) {
+        state->pendingDamage[state->pendingDamageCount].entityIndex = entityIndex;
+        state->pendingDamage[state->pendingDamageCount].damage = damage;
+        state->pendingDamageCount++;
+    }
+}
 
-    PacketEntityDamage damagePacket;
-    damagePacket.header.type = PACKET_ENTITY_DAMAGE;
-    damagePacket.header.playerIdentification = state->localPlayerIdentification;
-    damagePacket.header.timestamp = GetTime();
-    damagePacket.entityIndex = entityIndex;
-    damagePacket.damage = damage;
+void Network_SendDamageBatch(ConnectionState* state) {
+    if (!state->isConnected || state->pendingDamageCount == 0) return;
 
-    sendto(clientSocket, (char*)&damagePacket, sizeof(damagePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+    f64 currentTime = GetTime();
+    u32 batchCount = (state->pendingDamageCount > 128) ? 128 : state->pendingDamageCount;
+
+    PacketDamageBatch batchPacket;
+    batchPacket.header.type = PACKET_DAMAGE_BATCH;
+    batchPacket.header.playerIdentification = state->localPlayerIdentification;
+    batchPacket.header.timestamp = currentTime;
+    batchPacket.count = batchCount;
+    
+    for (u32 i = 0; i < batchCount; i++) {
+        batchPacket.entries[i] = state->pendingDamage[i];
+    }
+
+    sendto(clientSocket, (char*)&batchPacket, sizeof(PacketHeader) + 4 + (batchCount * sizeof(DamageEntry)), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+    
+    if (batchCount < state->pendingDamageCount) {
+        memmove(state->pendingDamage, state->pendingDamage + batchCount, (state->pendingDamageCount - batchCount) * sizeof(DamageEntry));
+    }
+    state->pendingDamageCount -= batchCount;
 }
 
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex) {

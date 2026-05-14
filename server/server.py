@@ -28,6 +28,7 @@ PACKET_ENTITY_DESPAWN = 9
 PACKET_WEAPON_FIRE = 10
 PACKET_ENTITY_DAMAGE = 11
 PACKET_PROJECTILE_EXPLODE = 12
+PACKET_DAMAGE_BATCH = 13
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
@@ -119,7 +120,20 @@ class Server:
         self.snapshot_tick_index = 0
         self.last_spawner_time = 0
         self.broadcastInterval = 0.05 
+        self.log_buffer = []
+        self.last_log_flush_time = time.time()
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
+
+    def log(self, message):
+        self.log_buffer.append(f"[{time.strftime('%H:%M:%S')}] {message}")
+        if len(self.log_buffer) > 1000: # Safety flush
+            self.flush_logs()
+
+    def flush_logs(self):
+        if self.log_buffer:
+            print("\n".join(self.log_buffer))
+            self.log_buffer = []
+        self.last_log_flush_time = time.time()
 
     def get_random_spawn_position(self, center_x=0, center_y=0, distance=1000):
         angle = random.uniform(0, 2 * math.pi)
@@ -134,17 +148,28 @@ class Server:
             delta_time = current_time - last_time
             last_time = current_time
 
-            try:
-                data, address = self.serverSocket.recvfrom(2048)
-                self.handle_packet(data, address)
-            except BlockingIOError:
-                pass
+            # 1. Process ALL available packets
+            while True:
+                try:
+                    data, address = self.serverSocket.recvfrom(2048)
+                    self.handle_packet(data, address)
+                except BlockingIOError:
+                    break
+                except Exception as e:
+                    self.log(f"Error receiving packet: {e}")
+                    break
             
+            # 2. Update Simulation
             self.update_server_simulation(delta_time)
             self.update_spawner(current_time)
             self.cleanup_disconnected_players()
             self.broadcast_world_state_snapshot()
-            self.broadcast_entity_snapshots() # Called every tick now
+            self.broadcast_entity_snapshots() 
+            
+            # 3. Periodic Log Flush
+            if current_time - self.last_log_flush_time > 1.0:
+                self.flush_logs()
+                
             time.sleep(0.01)
 
     def update_server_simulation(self, delta_time):
@@ -390,9 +415,30 @@ class Server:
                         if eIndex in self.entities:
                             # Verify it's an enemy (security)
                             if self.entities[eIndex]["charType"] == CHARACTER_ENEMY:
-                                print(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
+
+        elif packetType == PACKET_DAMAGE_BATCH:
+            if address in self.players:
+                header_size = struct.calcsize(WORLD_STATE_HEADER_FORMAT)
+                if len(data) >= header_size:
+                    _, _, _, count = struct.unpack(WORLD_STATE_HEADER_FORMAT, data[:header_size])
+                    entry_size = struct.calcsize("If")
+                    for i in range(count):
+                        start = header_size + (i * entry_size)
+                        if start + entry_size > len(data): break
+                        eIndex, damage = struct.unpack("<If", data[start:start+entry_size])
+                        if eIndex in self.entities:
+                            entity = self.entities[eIndex]
+                            if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
+                                entity["health"] -= damage
+                                if entity["health"] <= 0:
+                                    self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                    del self.entities[eIndex]
+                                    self.broadcast_despawn(eIndex)
+                                else:
+                                    self.broadcast_damage(eIndex, damage, playerIdentification)
 
         elif packetType == PACKET_WEAPON_FIRE:
             if address in self.players:
@@ -419,22 +465,13 @@ class Server:
                         entity = self.entities[eIndex]
                         if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                             entity["health"] -= damage
-                            print(f"Enemy {eIndex} took {damage} damage, HP: {entity['health']}")
-                            
-                            # If it was a fireball or bomb, spawn explosion visually?
-                            # Wait, we don't know what caused the damage from the report.
-                            # We'll let the client spawn the explosion locally for fireballs,
-                            # but server will spawn for bombs.
-                            
                             if entity["health"] <= 0:
-                                print(f"Enemy {eIndex} killed by player {playerIdentification}")
+                                self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
                             else:
-                                # Broadcast damage to other players
-                                self.broadcast_damage(eIndex, damage)
+                                self.broadcast_damage(eIndex, damage, playerIdentification)
                         elif entity["type"] == ENTITY_PROJECTILE and entity["charType"] == PROJECTILE_FIREBALL:
-                            # LEGACY: Handled by client PACKET_PROJECTILE_EXPLODE now
                             pass
 
         elif packetType == PACKET_PROJECTILE_EXPLODE:
@@ -580,8 +617,8 @@ class Server:
         }
         self.broadcast_spawn(eIndex)
 
-    def broadcast_damage(self, entityIndex, damage):
-        packet = struct.pack(ENTITY_DAMAGE_FORMAT, PACKET_ENTITY_DAMAGE, 0, time.time(), entityIndex, damage)
+    def broadcast_damage(self, entityIndex, damage, ownerID):
+        packet = struct.pack(ENTITY_DAMAGE_FORMAT, PACKET_ENTITY_DAMAGE, ownerID, time.time(), entityIndex, damage)
         for address in self.players:
             self.serverSocket.sendto(packet, address)
 
