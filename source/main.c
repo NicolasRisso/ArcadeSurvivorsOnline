@@ -282,7 +282,7 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 void Weapons_Update(f32 deltaTime) {
     if (!currentConnectionState.isConnected || isChoosingUpgrade) return;
 
-    for (i32 i = 0; i < 5; i++) {
+    for (i32 i = 0; i < 4; i++) {
         Weapon* weapon = &globalVariables.playerWeapons[i];
         if (weapon->type == WEAPON_UNDEFINED) continue;
         
@@ -468,8 +468,8 @@ void Input_Update(InputState* state) {
     // Handle Weapon Selection if active
     if (isChoosingUpgrade) {
         if (IsKeyPressed(KEY_ONE)) { ApplyUpgrade(0); isChoosingUpgrade = false; }
-        if (IsKeyPressed(KEY_TWO)) { ApplyUpgrade(1); isChoosingUpgrade = false; }
-        if (IsKeyPressed(KEY_THREE)) { ApplyUpgrade(2); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_TWO) && upgradeOptions[1].type != WEAPON_UNDEFINED) { ApplyUpgrade(1); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_THREE) && upgradeOptions[2].type != WEAPON_UNDEFINED) { ApplyUpgrade(2); isChoosingUpgrade = false; }
     }
 
     state->quitApplication = WindowShouldClose();
@@ -634,18 +634,48 @@ void Weapon_Upgrade(Weapon* w) {
 }
 
 void GenerateUpgradeOptions(LevelUpOption options[3]) {
-    WeaponType types[5] = { WEAPON_FIREBALL_RING, WEAPON_CRYSTAL_STAFF, WEAPON_DEATH_AURA, WEAPON_BOMB_SHOES, WEAPON_NATURE_SPIKES };
+    WeaponType allTypes[5] = { WEAPON_FIREBALL_RING, WEAPON_CRYSTAL_STAFF, WEAPON_DEATH_AURA, WEAPON_BOMB_SHOES, WEAPON_NATURE_SPIKES };
     const char* names[6] = { "", "Fireball", "Crystal Staff", "Death Aura", "Bomb Shoes", "Nature Spikes" };
     const char* descs[6] = { "", "Fiery explosions", "Piercing crystals", "Continuous damage aura", "Delayed explosions", "Spikes from the earth" };
     Color colors[6] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
 
-    // Randomize 3 different options
+    int ownedCount = 0;
+    WeaponType ownedTypes[4];
+    for (int i = 0; i < 4; i++) {
+        if (globalVariables.playerWeapons[i].type != WEAPON_UNDEFINED) {
+            ownedTypes[ownedCount++] = globalVariables.playerWeapons[i].type;
+        }
+    }
+
+    WeaponType pool[5];
+    int poolCount = 0;
+    if (ownedCount >= 4) {
+        // Inventory full: Only upgrade existing
+        for (int i = 0; i < ownedCount; i++) pool[poolCount++] = ownedTypes[i];
+    } else {
+        // Inventory not full: Can pick anything
+        for (int i = 0; i < 5; i++) pool[poolCount++] = allTypes[i];
+    }
+
+    // Shuffle pool to pick 3 unique
+    for (int i = 0; i < poolCount; i++) {
+        int r = i + rand() % (poolCount - i);
+        WeaponType temp = pool[i];
+        pool[i] = pool[r];
+        pool[r] = temp;
+    }
+
+    int countToGen = (poolCount < 3) ? poolCount : 3;
     for (int i = 0; i < 3; i++) {
-        int idx = rand() % 5;
-        options[i].type = types[idx];
-        options[i].name = names[options[i].type];
-        options[i].description = descs[options[i].type];
-        options[i].color = colors[options[i].type];
+        if (i < countToGen) {
+            WeaponType selected = pool[i];
+            options[i].type = selected;
+            options[i].name = names[selected];
+            options[i].description = descs[selected];
+            options[i].color = colors[selected];
+        } else {
+            options[i].type = WEAPON_UNDEFINED;
+        }
     }
 }
 
@@ -653,7 +683,7 @@ void ApplyUpgrade(int optionIndex) {
     WeaponType type = upgradeOptions[optionIndex].type;
     
     // Check if we already have it
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
         if (globalVariables.playerWeapons[i].type == type) {
             Weapon_Upgrade(&globalVariables.playerWeapons[i]);
             return;
@@ -661,7 +691,7 @@ void ApplyUpgrade(int optionIndex) {
     }
     
     // Find empty slot
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
         if (globalVariables.playerWeapons[i].type == WEAPON_UNDEFINED) {
             Weapon_Initialize(&globalVariables.playerWeapons[i], type);
             return;
@@ -670,26 +700,29 @@ void ApplyUpgrade(int optionIndex) {
 }
 
 void DrawUpgradeCards(void) {
-    float cardWidth = 250.0f;
-    float cardHeight = 350.0f;
-    float spacing = 40.0f;
-    float startX = (SCREEN_WIDTH - (cardWidth * 3 + spacing * 2)) / 2.0f;
-    float startY = SCREEN_HEIGHT - cardHeight - 50.0f;
+    float cardWidth = 220.0f;
+    float cardHeight = 150.0f;
+    float spacing = 20.0f;
+    float totalWidth = (cardWidth * 3) + (spacing * 2);
+    float startX = (SCREEN_WIDTH - totalWidth) / 2.0f;
+    float startY = SCREEN_HEIGHT - cardHeight - 20.0f;
     
     for (int i = 0; i < 3; i++) {
+        if (upgradeOptions[i].type == WEAPON_UNDEFINED) continue;
+        
         Rectangle card = { startX + i * (cardWidth + spacing), startY, cardWidth, cardHeight };
         
         // Draw card background
-        DrawRectangleRec(card, Fade(DARKGRAY, 0.9f));
-        DrawRectangleLinesEx(card, 2, WHITE);
+        DrawRectangleRec(card, Fade(BLACK, 0.8f));
+        DrawRectangleLinesEx(card, 2, YELLOW);
         
         // Draw Header
-        DrawText(TextFormat("[%d]", i + 1), card.x + 10, card.y + 10, 20, YELLOW);
-        DrawText(upgradeOptions[i].name, card.x + 50, card.y + 10, 20, WHITE);
+        DrawText(TextFormat("[%d] SELECT", i + 1), card.x + 10, card.y + 10, 16, YELLOW);
+        DrawText(upgradeOptions[i].name, card.x + 10, card.y + 35, 20, WHITE);
         
         // Find current level if owned
         int currentLv = 0;
-        for (int j = 0; j < 5; j++) {
+        for (int j = 0; j < 4; j++) {
             if (globalVariables.playerWeapons[j].type == upgradeOptions[i].type) {
                 currentLv = globalVariables.playerWeapons[j].level;
                 break;
@@ -697,16 +730,16 @@ void DrawUpgradeCards(void) {
         }
         
         if (currentLv > 0) {
-            DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 40, 16, GREEN);
+            DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 60, 16, GREEN);
         } else {
-            DrawText("NEW WEAPON", card.x + 10, card.y + 40, 16, SKYBLUE);
+            DrawText("NEW WEAPON", card.x + 10, card.y + 60, 16, SKYBLUE);
         }
         
-        // Draw Image Placeholder
-        DrawRectangle(card.x + 50, card.y + 80, cardWidth - 100, 150, upgradeOptions[i].color);
-        DrawRectangleLines(card.x + 50, card.y + 80, cardWidth - 100, 150, WHITE);
+        // Small Color Box
+        DrawRectangle(card.x + 160, card.y + 35, 40, 40, upgradeOptions[i].color);
+        DrawRectangleLines(card.x + 160, card.y + 35, 40, 40, WHITE);
         
         // Draw Description
-        DrawText(upgradeOptions[i].description, card.x + 10, card.y + 250, 14, GRAY);
+        DrawText(upgradeOptions[i].description, card.x + 10, card.y + 90, 14, GRAY);
     }
 }

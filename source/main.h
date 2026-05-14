@@ -159,7 +159,7 @@ typedef struct Entity{
 //~ Global Definitions
 typedef struct GlobalVariables{
     Entity entities[MAX_ENTITY_AMOUNT];
-    Weapon playerWeapons[5];
+    Weapon playerWeapons[4];
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
