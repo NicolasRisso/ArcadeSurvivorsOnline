@@ -290,7 +290,7 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 
 // --- Weapon System Implementation ---
 void Weapons_Update(f32 deltaTime) {
-    if (!currentConnectionState.isConnected || isChoosingUpgrade) return;
+    if (!currentConnectionState.isConnected) return;
 
     u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
     PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
