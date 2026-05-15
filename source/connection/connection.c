@@ -41,6 +41,20 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->lastVelocitySentTime = 0;
     connectionState->pendingKillsCount = 0;
     connectionState->pendingDamageCount = 0;
+    connectionState->health = DEFAULT_MAX_HEALTH;
+    connectionState->maxHealth = DEFAULT_MAX_HEALTH;
+
+    for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
+        connectionState->playerAttributes[i] = (PlayerAttributes){
+            .maxHealth = DEFAULT_MAX_HEALTH,
+            .damage = DEFAULT_DAMAGE,
+            .attackSpeed = DEFAULT_ATTACK_SPEED,
+            .movementSpeed = DEFAULT_MOVEMENT_SPEED,
+            .size = DEFAULT_SIZE,
+            .xpGained = DEFAULT_XP_GAINED,
+            .lifeSteal = DEFAULT_LIFESTEAL
+        };
+    }
 
     for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
         connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
@@ -98,7 +112,11 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 PacketWorldState* worldState = (PacketWorldState*)receiveBuffer;
                 for (u32 playerIndex = 0; playerIndex < worldState->count; playerIndex++) {
                     RemotePlayerState* remotePlayerState = &worldState->players[playerIndex];
-                    if (remotePlayerState->identification == connectionState->localPlayerIdentification) continue;
+                    if (remotePlayerState->identification == connectionState->localPlayerIdentification) {
+                        // Reconcile local position with server
+                        connectionState->localPosition = Vector2Lerp(connectionState->localPosition, remotePlayerState->position, 0.5f);
+                        continue;
+                    }
 
                     u32 entityIndex = remotePlayerState->identification % MAX_REMOTE_ENTITIES;
                     connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
@@ -202,6 +220,13 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
                 break;
             }
+            case PACKET_ATTRIBUTE_UPDATE: {
+                PacketAttributeUpdate* attrUpdate = (PacketAttributeUpdate*)receiveBuffer;
+                u32 playerIndex = (attrUpdate->header.playerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                connectionState->playerAttributes[playerIndex] = attrUpdate->attributes;
+                printf("ATTRIBUTES: Player %u updated attributes.\n", attrUpdate->header.playerIdentification);
+                break;
+            }
         }
     }
 
@@ -245,6 +270,7 @@ void Network_SendVelocity(ConnectionState* connectionState, Vector2 velocity) {
     velocityUpdatePacket.header.type = PACKET_VELOCITY_UPDATE;
     velocityUpdatePacket.header.playerIdentification = connectionState->localPlayerIdentification;
     velocityUpdatePacket.header.timestamp = currentTime;
+    velocityUpdatePacket.position = connectionState->localPosition;
     velocityUpdatePacket.velocity = velocity;
 
     sendto(clientSocket, (char*)&velocityUpdatePacket, sizeof(velocityUpdatePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
@@ -354,6 +380,18 @@ void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex) 
     explodePacket.projectileIndex = projectileIndex;
 
     sendto(clientSocket, (char*)&explodePacket, sizeof(explodePacket), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+}
+
+void Network_SendAttributeUpdate(ConnectionState* state, PlayerAttributes attr) {
+    if (!state->isConnected) return;
+
+    PacketAttributeUpdate packet;
+    packet.header.type = PACKET_ATTRIBUTE_UPDATE;
+    packet.header.playerIdentification = state->localPlayerIdentification;
+    packet.header.timestamp = GetTime();
+    packet.attributes = attr;
+
+    sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
 }
 
 

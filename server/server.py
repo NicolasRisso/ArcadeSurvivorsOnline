@@ -33,6 +33,7 @@ PACKET_ENTITY_DAMAGE = 11
 PACKET_PROJECTILE_EXPLODE = 12
 PACKET_DAMAGE_BATCH = 13
 PACKET_XP_COLLECT = 14
+PACKET_ATTRIBUTE_UPDATE = 15
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
@@ -100,7 +101,7 @@ SPAWN_CONFIG = {
 # Struct Formats (Little Endian, Packed)
 HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
-VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ff"
+VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ffff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
 PLAYER_STATE_FORMAT = "IffffB"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffffi"
@@ -111,7 +112,10 @@ ENTITY_DESPAWN_FORMAT = HEADER_FORMAT + "I"
 WEAPON_FIRE_FORMAT = HEADER_FORMAT + "Bffi"
 ENTITY_DAMAGE_FORMAT = HEADER_FORMAT + "If"
 PACKET_PROJECTILE_EXPLODE_FORMAT = HEADER_FORMAT + "I"
-PACKET_XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
+DAMAGE_BATCH_HEADER_FORMAT = HEADER_FORMAT + "I"
+DAMAGE_ENTRY_FORMAT = "If"
+XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
+ATTRIBUTE_UPDATE_FORMAT = HEADER_FORMAT + "fffffff"
 
 class Server:
     def __init__(self):
@@ -381,10 +385,10 @@ class Server:
                     "velocity_x": 0.0,
                     "velocity_y": 0.0,
                     "lastHeartbeatReceived": time.time(),
-                    "weapons_mask": 0
+                    "weapons_mask": 0,
+                    "attributes": (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0)
                 }
                 print(f"New player {newIdentification} connected from {address}")
-                # (Removed legacy spawn 10 enemies on connect - now handled by 2.5s spawner)
             
             player = self.players[address]
             identificationResponse = struct.pack(IDENTIFICATION_RESPONSE_FORMAT, PACKET_ID_RESPONSE, player["identification"], packetTimestamp)
@@ -404,7 +408,9 @@ class Server:
         elif packetType == PACKET_VELOCITY_UPDATE:
             if address in self.players:
                 if len(data) >= struct.calcsize(VELOCITY_UPDATE_FORMAT):
-                    _, _, _, velocityX, velocityY = struct.unpack(VELOCITY_UPDATE_FORMAT, data[:struct.calcsize(VELOCITY_UPDATE_FORMAT)])
+                    _, _, _, posX, posY, velocityX, velocityY = struct.unpack(VELOCITY_UPDATE_FORMAT, data[:struct.calcsize(VELOCITY_UPDATE_FORMAT)])
+                    self.players[address]["position_x"] = posX
+                    self.players[address]["position_y"] = posY
                     self.players[address]["velocity_x"] = velocityX
                     self.players[address]["velocity_y"] = velocityY
                     self.players[address]["lastHeartbeatReceived"] = time.time()
@@ -428,14 +434,14 @@ class Server:
 
         elif packetType == PACKET_DAMAGE_BATCH:
             if address in self.players:
-                header_size = struct.calcsize(WORLD_STATE_HEADER_FORMAT)
+                header_size = struct.calcsize(DAMAGE_BATCH_HEADER_FORMAT)
                 if len(data) >= header_size:
-                    _, _, _, count = struct.unpack(WORLD_STATE_HEADER_FORMAT, data[:header_size])
-                    entry_size = struct.calcsize("If")
+                    _, _, _, count = struct.unpack(DAMAGE_BATCH_HEADER_FORMAT, data[:header_size])
+                    entry_size = struct.calcsize(DAMAGE_ENTRY_FORMAT)
                     for i in range(count):
                         start = header_size + (i * entry_size)
                         if start + entry_size > len(data): break
-                        eIndex, damage = struct.unpack("<If", data[start:start+entry_size])
+                        eIndex, damage = struct.unpack("<" + DAMAGE_ENTRY_FORMAT, data[start:start+entry_size])
                         if eIndex in self.entities:
                             entity = self.entities[eIndex]
                             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
@@ -504,8 +510,6 @@ class Server:
                                 self.spawn_xp_crystal(ex, ey)
                             else:
                                 self.broadcast_damage(eIndex, damage, playerIdentification)
-                        elif entity["type"] == ENTITY_PROJECTILE and entity["charType"] == PROJECTILE_FIREBALL:
-                            pass
 
         elif packetType == PACKET_PROJECTILE_EXPLODE:
             if address in self.players:
@@ -514,14 +518,24 @@ class Server:
                     if projectileIndex in self.entities:
                         proj = self.entities[projectileIndex]
                         if proj["type"] == ENTITY_PROJECTILE:
-                            self.spawn_explosion(proj["position_x"], proj["position_y"], FIREBALL_RADIUS, proj.get("ownerID", 0))
-                            del self.entities[projectileIndex]
-                            self.broadcast_despawn(projectileIndex)
+                            self.spawn_explosion(proj["position_x"], proj["position_y"], proj["max_health"], proj.get("ownerID", 0))
+                        del self.entities[projectileIndex]
+                        self.broadcast_despawn(projectileIndex)
+
+        elif packetType == PACKET_ATTRIBUTE_UPDATE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(ATTRIBUTE_UPDATE_FORMAT):
+                    unpacked = struct.unpack(ATTRIBUTE_UPDATE_FORMAT, data[:struct.calcsize(ATTRIBUTE_UPDATE_FORMAT)])
+                    attributes = unpacked[3:] # fffffff
+                    self.players[address]["attributes"] = attributes
+                    print(f"Player {playerIdentification} updated attributes: {attributes}")
+                    # Broadcast to others
+                    self.broadcast_attribute_update(playerIdentification, attributes)
 
         elif packetType == PACKET_XP_COLLECT:
             if address in self.players:
-                if len(data) >= struct.calcsize(PACKET_XP_COLLECT_FORMAT):
-                    _, _, _, crystalIndex = struct.unpack(PACKET_XP_COLLECT_FORMAT, data[:struct.calcsize(PACKET_XP_COLLECT_FORMAT)])
+                if len(data) >= struct.calcsize(XP_COLLECT_FORMAT):
+                    _, _, _, crystalIndex = struct.unpack(XP_COLLECT_FORMAT, data[:struct.calcsize(XP_COLLECT_FORMAT)])
                     if crystalIndex in self.entities:
                         if self.entities[crystalIndex]["type"] == ENTITY_XP_CRYSTAL:
                             self.log(f"XP Crystal {crystalIndex} collected by player {playerIdentification}")
@@ -592,6 +606,11 @@ class Server:
 
     def broadcast_despawn(self, entityIndex):
         packet = struct.pack(ENTITY_DESPAWN_FORMAT, PACKET_ENTITY_DESPAWN, 0, time.time(), entityIndex)
+        for address in self.players:
+            self.serverSocket.sendto(packet, address)
+
+    def broadcast_attribute_update(self, playerIdentification, attributes):
+        packet = struct.pack(ATTRIBUTE_UPDATE_FORMAT, PACKET_ATTRIBUTE_UPDATE, playerIdentification, time.time(), *attributes)
         for address in self.players:
             self.serverSocket.sendto(packet, address)
 

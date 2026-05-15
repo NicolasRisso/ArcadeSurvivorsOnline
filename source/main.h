@@ -140,6 +140,24 @@ typedef struct Weapon {
     WeaponStats stats;
 } Weapon;
 
+typedef struct PlayerAttributes {
+    f32 maxHealth;
+    f32 damage;
+    f32 attackSpeed;
+    f32 movementSpeed;
+    f32 size;
+    f32 xpGained;
+    f32 lifeSteal;
+} PlayerAttributes;
+
+#define DEFAULT_MAX_HEALTH 100.0f
+#define DEFAULT_DAMAGE 1.0f
+#define DEFAULT_ATTACK_SPEED 1.0f
+#define DEFAULT_MOVEMENT_SPEED 1.0f
+#define DEFAULT_SIZE 1.0f
+#define DEFAULT_XP_GAINED 1.0f
+#define DEFAULT_LIFESTEAL 0.0f
+
 typedef struct LevelUpOption {
     WeaponType type;
     const char* name;
@@ -173,7 +191,11 @@ void Weapon_FireFireballRing(Vector2 position, u32 ownerID);
 //~ End of Weapons
 
 //~ Begin of Player
+struct ConnectionState;
+typedef struct ConnectionState ConnectionState;
 void Player_UpdateMovement(f32 deltaTime);
+void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr);
+void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE);
 //~ End of Player
 
 //~ Begin of Input

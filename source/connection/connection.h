@@ -26,7 +26,8 @@ typedef enum {
     PACKET_ENTITY_DAMAGE = 11,
     PACKET_PROJECTILE_EXPLODE = 12,
     PACKET_DAMAGE_BATCH = 13,
-    PACKET_XP_COLLECT = 14
+    PACKET_XP_COLLECT = 14,
+    PACKET_ATTRIBUTE_UPDATE = 15
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
@@ -58,6 +59,7 @@ typedef struct {
 
 typedef struct {
     PacketHeader header;
+    Vector2 position;
     Vector2 velocity;
 } PacketVelocityUpdate;
 
@@ -140,17 +142,25 @@ typedef struct {
     u32 crystalIndex;
 } PacketXPCollect;
 
+typedef struct {
+    PacketHeader header;
+    PlayerAttributes attributes;
+} PacketAttributeUpdate;
+
 #pragma pack(pop)
 
-typedef struct {
+typedef struct ConnectionState {
     u32 localPlayerIdentification;
     Vector2 localPosition;
+    f32 health;
+    f32 maxHealth;
     bool isConnected;
     
     f64 lastHeartbeatSent;
     f64 lastHeartbeatReceived;
     f64 lastVelocitySentTime;
     
+    PlayerAttributes playerAttributes[MAX_REMOTE_PLAYERS];
     Entity remoteEntities[MAX_REMOTE_ENTITIES];
 
     u32 pendingKills[512];
@@ -171,6 +181,7 @@ void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage);
 void Network_SendDamageBatch(ConnectionState* state);
 void Network_SendXPCollect(ConnectionState* state, u32 crystalIndex);
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex);
+void Network_SendAttributeUpdate(ConnectionState* state, PlayerAttributes attr);
 void Network_QueueDeath(ConnectionState* state, u32 enemyID);
 void Network_CloseConnection();
 

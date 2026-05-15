@@ -103,7 +103,10 @@ int main(void) {
                 
                 if (dist < COLLECT_RADIUS) {
                     // Collect!
-                    playerXP += entity->xpCrystal.xpValue;
+                    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+                    
+                    playerXP += entity->xpCrystal.xpValue * attr->xpGained;
                     if (playerXP >= xpToNextLevel) {
                         playerLevel++;
                         playerXP -= xpToNextLevel;
@@ -184,6 +187,13 @@ int main(void) {
                 DrawText(TextFormat("Target IP: %s:%d", SERVER_IP, SERVER_PORT), SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2 + 40, 10, GRAY);
             } else {
                 DrawText("CONNECTED", 10, 30, 20, GREEN);
+                
+                // Draw local health bar
+                f32 healthPercent = currentConnectionState.health / currentConnectionState.maxHealth;
+                DrawRectangle(10, 60, 200, 20, DARKGRAY);
+                DrawRectangle(10, 60, (int)(200 * healthPercent), 20, RED);
+                DrawRectangleLines(10, 60, 200, 20, BLACK);
+                DrawText(TextFormat("%.0f / %.0f", currentConnectionState.health, currentConnectionState.maxHealth), 70, 65, 10, WHITE);
             }
         EndDrawing();
     }
@@ -282,18 +292,21 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 void Weapons_Update(f32 deltaTime) {
     if (!currentConnectionState.isConnected || isChoosingUpgrade) return;
 
+    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+
     for (i32 i = 0; i < 4; i++) {
         Weapon* weapon = &globalVariables.playerWeapons[i];
         if (weapon->type == WEAPON_UNDEFINED) continue;
         
         weapon->cooldownTimer -= deltaTime;
         if (weapon->cooldownTimer <= 0) {
-            f32 dmg = weapon->stats.damage;
-            f32 rad = weapon->stats.size;
+            f32 dmg = weapon->stats.damage * attr->damage;
+            f32 rad = weapon->stats.size * attr->size;
             i32 extra = 0;
             
             if (weapon->type == WEAPON_CRYSTAL_STAFF) extra = weapon->stats.spec.crystalStaff.projectileAmount;
-            else if (weapon->type == WEAPON_FIREBALL_RING) rad = weapon->stats.spec.fireball.explosionSize;
+            else if (weapon->type == WEAPON_FIREBALL_RING) rad = weapon->stats.spec.fireball.explosionSize * attr->size;
             else if (weapon->type == WEAPON_NATURE_SPIKES) extra = weapon->stats.spec.natureSpikes.spikeAmount;
             
             Network_SendWeaponFire(&currentConnectionState, (u8)weapon->type, dmg, rad, extra);
@@ -304,9 +317,10 @@ void Weapons_Update(f32 deltaTime) {
                 for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {
                     Entity* enemy = &currentConnectionState.remoteEntities[enemyIndex];
                     if (enemy->entityType == ENTITY_CHARACTER && enemy->character.characterType == CHARACTER_ENEMY) {
-                        if (CheckCollisionCircles(currentConnectionState.localPosition, weapon->stats.size, enemy->character.position, PLAYER_RADIUS)) {
-                            Network_SendDamage(&currentConnectionState, enemyIndex, weapon->stats.damage);
-                            enemy->character.health -= weapon->stats.damage; // Local Prediction
+                        if (CheckCollisionCircles(currentConnectionState.localPosition, rad, enemy->character.position, PLAYER_RADIUS)) {
+                            ApplyLifesteal(&currentConnectionState, enemyIndex, dmg, true);
+                            Network_SendDamage(&currentConnectionState, enemyIndex, dmg);
+                            enemy->character.health -= dmg; // Local Prediction
                             hitCount++;
                             if (hitCount >= 100) break;
                         }
@@ -314,7 +328,7 @@ void Weapons_Update(f32 deltaTime) {
                 }
             }
             
-            weapon->cooldownTimer = weapon->stats.attackSpeed;
+            weapon->cooldownTimer = weapon->stats.attackSpeed / attr->attackSpeed;
         }
     }
 }
@@ -331,6 +345,11 @@ void Projectile_UpdateMovement(f32 deltaTime) {
             
             // Lifetime (Predicted locally)
             proj->lifetime -= deltaTime;
+
+            u32 ownerIndex = (proj->ownerID - 1) % MAX_REMOTE_PLAYERS;
+            PlayerAttributes* ownerAttr = &currentConnectionState.playerAttributes[ownerIndex];
+            bool isLocalOwner = (proj->ownerID == currentConnectionState.localPlayerIdentification);
+
             // Collision check with enemies (Client prediction)
             if (proj->type == PROJECTILE_FIREBALL) {
                 for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {
@@ -338,11 +357,14 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                     if (remoteEntity->entityType == ENTITY_CHARACTER && remoteEntity->character.characterType == CHARACTER_ENEMY) {
                         if (CheckCollisionCircles(proj->position, 10, remoteEntity->character.position, PLAYER_RADIUS)) {
                             // Prediction: Hide fireball and show local explosion instantly
+                            f32 explosionRadius = FIREBALL_RADIUS * ownerAttr->size;
+                            f32 explosionDamage = 50.0f * ownerAttr->damage;
+
                             for (int v = 0; v < 128; v++) {
                                 if (!currentConnectionState.localVisualEffects[v].active) {
                                     currentConnectionState.localVisualEffects[v].active = true;
                                     currentConnectionState.localVisualEffects[v].position = proj->position;
-                                    currentConnectionState.localVisualEffects[v].radius = FIREBALL_RADIUS;
+                                    currentConnectionState.localVisualEffects[v].radius = explosionRadius;
                                     currentConnectionState.localVisualEffects[v].lifetime = 0.5f;
                                     break;
                                 }
@@ -352,9 +374,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                             for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_ENTITIES; otherIndex++) {
                                 Entity* other = &currentConnectionState.remoteEntities[otherIndex];
                                 if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
-                                    if (CheckCollisionCircles(proj->position, FIREBALL_RADIUS, other->character.position, PLAYER_RADIUS)) {
-                                        Network_SendDamage(&currentConnectionState, otherIndex, 50.0f); // DAMAGE_FIREBALL
-                                        other->character.health -= 50.0f; // Local Prediction
+                                    if (CheckCollisionCircles(proj->position, explosionRadius, other->character.position, PLAYER_RADIUS)) {
+                                        if (isLocalOwner) ApplyLifesteal(&currentConnectionState, otherIndex, explosionDamage, true);
+                                        Network_SendDamage(&currentConnectionState, otherIndex, explosionDamage); // DAMAGE_FIREBALL
+                                        other->character.health -= explosionDamage; // Local Prediction
                                     }
                                 }
                             }
@@ -376,8 +399,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                                 if (proj->hitEnemies[h] == (u32)enemyIndex) { alreadyHit = true; break; }
                             }
                             if (!alreadyHit) {
-                                Network_SendDamage(&currentConnectionState, enemyIndex, 100.0f); // DAMAGE_CRYSTAL
-                                remoteEntity->character.health -= 100.0f; // Local Prediction
+                                f32 crystalDamage = 100.0f * ownerAttr->damage;
+                                if (isLocalOwner) ApplyLifesteal(&currentConnectionState, enemyIndex, crystalDamage, false);
+                                Network_SendDamage(&currentConnectionState, enemyIndex, crystalDamage); // DAMAGE_CRYSTAL
+                                remoteEntity->character.health -= crystalDamage; // Local Prediction
                                 if (proj->hitCount < 8) proj->hitEnemies[proj->hitCount++] = enemyIndex;
                             }
                         }
@@ -385,12 +410,15 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                 }
             } else if (proj->type == PROJECTILE_BOMB) {
                 if (proj->lifetime <= 0.0f) { // Explosion trigger (BOMB_DELAY=2.0)
+                    f32 bombRadius = BOMB_RADIUS * ownerAttr->size;
+                    f32 bombDamage = 500.0f * ownerAttr->damage;
+
                     // Prediction: Hide bomb and show local explosion instantly
                     for (int v = 0; v < 128; v++) {
                         if (!currentConnectionState.localVisualEffects[v].active) {
                             currentConnectionState.localVisualEffects[v].active = true;
                             currentConnectionState.localVisualEffects[v].position = proj->position;
-                            currentConnectionState.localVisualEffects[v].radius = BOMB_RADIUS;
+                            currentConnectionState.localVisualEffects[v].radius = bombRadius;
                             currentConnectionState.localVisualEffects[v].lifetime = 0.5f;
                             break;
                         }
@@ -399,9 +427,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                     for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_ENTITIES; otherIndex++) {
                         Entity* other = &currentConnectionState.remoteEntities[otherIndex];
                         if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
-                            if (CheckCollisionCircles(proj->position, BOMB_RADIUS, other->character.position, PLAYER_RADIUS)) {
-                                Network_SendDamage(&currentConnectionState, otherIndex, 500.0f); // DAMAGE_BOMB
-                                other->character.health -= 500.0f; // Local Prediction
+                            if (CheckCollisionCircles(proj->position, bombRadius, other->character.position, PLAYER_RADIUS)) {
+                                if (isLocalOwner) ApplyLifesteal(&currentConnectionState, otherIndex, bombDamage, true);
+                                Network_SendDamage(&currentConnectionState, otherIndex, bombDamage); // DAMAGE_BOMB
+                                other->character.health -= bombDamage; // Local Prediction
                             }
                         }
                     }
@@ -411,17 +440,21 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                 // Spikes deal damage every 0.15s
                 proj->tickTimer += deltaTime;
                 if (proj->tickTimer >= 0.15f) {
+                    f32 spikeRadius = SPIKE_RADIUS * ownerAttr->size;
+                    f32 spikeDamage = 20.0f * ownerAttr->damage;
+
                     for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_ENTITIES; otherIndex++) {
                         Entity* other = &currentConnectionState.remoteEntities[otherIndex];
                         if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
-                            if (CheckCollisionCircles(proj->position, SPIKE_RADIUS, other->character.position, PLAYER_RADIUS)) {
-                                Network_SendDamage(&currentConnectionState, otherIndex, 20.0f); // DAMAGE_SPIKE
-                                other->character.health -= 20.0f; // Local Prediction
-                                proj->damageAccumulated += 20.0f;
+                            if (CheckCollisionCircles(proj->position, spikeRadius, other->character.position, PLAYER_RADIUS)) {
+                                if (isLocalOwner) ApplyLifesteal(&currentConnectionState, otherIndex, spikeDamage, true);
+                                Network_SendDamage(&currentConnectionState, otherIndex, spikeDamage); // DAMAGE_SPIKE
+                                other->character.health -= spikeDamage; // Local Prediction
+                                proj->damageAccumulated += spikeDamage;
                             }
                         }
                     }
-                    if (proj->damageAccumulated >= 150.0f) entity->entityType = ENTITY_UNDEFINED;
+                    if (proj->damageAccumulated >= 150.0f * ownerAttr->damage) entity->entityType = ENTITY_UNDEFINED;
                     proj->tickTimer = 0;
                 }
             }
@@ -442,14 +475,50 @@ void Weapon_FireFireballRing(Vector2 position, u32 ownerID) {
 void Player_UpdateMovement(f32 deltaTime) {
     if (!Network_IsConnected(&currentConnectionState)) return;
 
+    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+
     Vector2 movementVelocity = (Vector2){ 0, 0 };
-    movementVelocity.x = currentInputState.movementDirection.x * PLAYER_SPEED;
-    movementVelocity.y = currentInputState.movementDirection.y * PLAYER_SPEED;
+    movementVelocity.x = currentInputState.movementDirection.x * PLAYER_SPEED * attr->movementSpeed;
+    movementVelocity.y = currentInputState.movementDirection.y * PLAYER_SPEED * attr->movementSpeed;
 
     currentConnectionState.localPosition.x += movementVelocity.x * deltaTime;
     currentConnectionState.localPosition.y += movementVelocity.y * deltaTime;
     
     Network_SendVelocity(&currentConnectionState, movementVelocity);
+}
+
+void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr) {
+    if (!state->isConnected) return;
+    
+    u32 localIndex = (state->localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    state->playerAttributes[localIndex] = attr;
+    
+    // Update local health values based on attribute change
+    state->maxHealth = attr.maxHealth;
+    if (state->health > state->maxHealth) state->health = state->maxHealth;
+    
+    Network_SendAttributeUpdate(state, attr);
+}
+
+void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE) {
+    u32 localIndex = (state->localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    PlayerAttributes* attr = &state->playerAttributes[localIndex];
+    if (attr->lifeSteal <= 0) return;
+    
+    Entity* enemy = &state->remoteEntities[enemyIndex % MAX_REMOTE_ENTITIES];
+    if (enemy->entityType != ENTITY_CHARACTER) return;
+
+    // Cap damage by enemy health
+    f32 actualDamage = damage;
+    if (actualDamage > enemy->character.health) actualDamage = enemy->character.health;
+    if (actualDamage <= 0) return;
+    
+    f32 healing = actualDamage * attr->lifeSteal;
+    if (isAoE) healing *= 0.40f;
+    
+    state->health += healing;
+    if (state->health > state->maxHealth) state->health = state->maxHealth;
 }
 
 // --- Input System Implementation ---
