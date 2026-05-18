@@ -182,6 +182,7 @@ int main(void) {
             // UI Overlay
             DrawXPBar();
             if (isChoosingUpgrade) DrawUpgradeCards();
+            if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
             DrawFPS(10, 10);
             if (!currentConnectionState.isConnected) {
                 DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
@@ -1003,4 +1004,99 @@ void DrawUpgradeCards(void) {
         // Draw Description
         DrawText(upgradeOptions[i].description, card.x + 10, descY, 14, GRAY);
     }
+}
+
+void DrawStatsOverlay(void) {
+    // 1. Dark fullscreen backdrop with 50% opacity
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.5f));
+    
+    // 2. Centered HUD Panel
+    Rectangle hud = { 128, 72, 1024, 576 };
+    DrawRectangleRec(hud, Fade(BLACK, 0.85f));
+    DrawRectangleLinesEx(hud, 3, GOLD);
+    
+    // 3. Header title
+    DrawText("PLAYER PROFILE & STATS", hud.x + 350, hud.y + 20, 24, GOLD);
+    DrawLine(hud.x + 50, hud.y + 60, hud.x + 974, hud.y + 60, GRAY);
+    
+    // Get local player attributes
+    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+    
+    // 4. Left Column - Equipped Gear
+    float leftX = hud.x + 50;
+    DrawText("EQUIPPED GEAR", leftX, hud.y + 80, 20, SKYBLUE);
+    
+    // Weapons
+    DrawText("WEAPONS", leftX, hud.y + 115, 16, YELLOW);
+    const char* weaponNames[] = { "", "Fireball", "Crystal Staff", "Death Aura", "Bomb Shoes", "Nature Spikes" };
+    Color weaponColors[] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
+    for (int i = 0; i < 4; i++) {
+        float slotY = hud.y + 145 + i * 32;
+        Weapon* w = &globalVariables.playerWeapons[i];
+        if (w->type == WEAPON_UNDEFINED) {
+            DrawText(TextFormat("[%d] [Empty Weapon Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
+        } else {
+            DrawRectangle(leftX + 15, slotY + 2, 10, 10, weaponColors[w->type]);
+            DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+            
+            DrawText(TextFormat("%s  -  Lv.%d  (Dmg: %.1f, Spd: %.2fx, Sz: %.1fx)", 
+                                weaponNames[w->type], w->level, 
+                                w->stats.damage, w->stats.attackSpeed, w->stats.size), 
+                     leftX + 35, slotY, 14, WHITE);
+        }
+    }
+    
+    // Relics
+    DrawText("RELICS", leftX, hud.y + 295, 16, PINK);
+    const char* relicNames[] = { "", "Relic of Health", "Relic of Damage", "Relic of Attack Speed", "Relic of Size", "Relic of Movement Speed", "Relic of XP Gain", "Relic of Lifesteal" };
+    Color relicColors[] = { WHITE, RED, ORANGE, GOLD, PURPLE, LIME, PINK, VIOLET };
+    for (int i = 0; i < 4; i++) {
+        float slotY = hud.y + 325 + i * 32;
+        Relic* r = &globalVariables.playerRelics[i];
+        if (r->type == RELIC_UNDEFINED) {
+            DrawText(TextFormat("[%d] [Empty Relic Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
+        } else {
+            DrawRectangle(leftX + 15, slotY + 2, 10, 10, relicColors[r->type]);
+            DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+            
+            int pct = 0;
+            switch (r->type) {
+                case RELIC_HEALTH: pct = (int)(r->level * RELIC_LEVELUP_HEALTH * 100); break;
+                case RELIC_DAMAGE: pct = (int)(r->level * RELIC_LEVELUP_DAMAGE * 100); break;
+                case RELIC_ATTACK_SPEED: pct = (int)(r->level * RELIC_LEVELUP_ATTACKSPEED * 100); break;
+                case RELIC_SIZE: pct = (int)(r->level * RELIC_LEVELUP_SIZE * 100); break;
+                case RELIC_MOVEMENT_SPEED: pct = (int)(r->level * RELIC_LEVELUP_MOVEMENTSPEED * 100); break;
+                case RELIC_XP_GAIN: pct = (int)(r->level * RELIC_LEVELUP_XPGAIN * 100); break;
+                case RELIC_LIFE_STEAL: pct = (int)(r->level * RELIC_LEVELUP_LIFESTEAL * 100); break;
+                default: break;
+            }
+            
+            DrawText(TextFormat("%s  -  Lv.%d  (+%d%% Bonus)", 
+                                relicNames[r->type], r->level, pct), 
+                     leftX + 35, slotY, 14, WHITE);
+        }
+    }
+    
+    // 5. Vertical Divider Line
+    float midX = hud.x + 500;
+    DrawLine(midX, hud.y + 80, midX, hud.y + 510, GRAY);
+    
+    // 6. Right Column - Player Attributes
+    float rightX = hud.x + 540;
+    DrawText("PLAYER ATTRIBUTES", rightX, hud.y + 80, 20, GOLD);
+    
+    DrawText(TextFormat("Max Health:               %.1f  (Base: %.1f)", attr->maxHealth, DEFAULT_MAX_HEALTH), rightX + 20, hud.y + 125, 15, WHITE);
+    DrawText(TextFormat("Damage Multiplier:        %.2fx  (Base: %.2fx)", attr->damage, DEFAULT_DAMAGE), rightX + 20, hud.y + 175, 15, WHITE);
+    DrawText(TextFormat("Attack Speed Multiplier:  %.2fx  (Base: %.2fx)", attr->attackSpeed, DEFAULT_ATTACK_SPEED), rightX + 20, hud.y + 225, 15, WHITE);
+    DrawText(TextFormat("Movement Speed Multiplier:%.2fx  (Base: %.2fx)", attr->movementSpeed, DEFAULT_MOVEMENT_SPEED), rightX + 20, hud.y + 275, 15, WHITE);
+    DrawText(TextFormat("Area Size Multiplier:     %.2fx  (Base: %.2fx)", attr->size, DEFAULT_SIZE), rightX + 20, hud.y + 325, 15, WHITE);
+    DrawText(TextFormat("XP Gain Multiplier:       %.2fx  (Base: %.2fx)", attr->xpGained, DEFAULT_XP_GAINED), rightX + 20, hud.y + 375, 15, WHITE);
+    DrawText(TextFormat("Lifesteal Factor:         %.0f%%  (Base: %.0f%%)", attr->lifeSteal * 100.0f, DEFAULT_LIFESTEAL * 100.0f), rightX + 20, hud.y + 425, 15, WHITE);
+    
+    // Decorative frame highlight around active stats
+    DrawRectangleLinesEx((Rectangle){ rightX, hud.y + 110, 434, 345 }, 1, Fade(GRAY, 0.4f));
+    
+    // 7. Footer controls hint
+    DrawText("HOLD [TAB] TO KEEP THIS OVERLAY OPEN", hud.x + 330, hud.y + 535, 14, GRAY);
 }

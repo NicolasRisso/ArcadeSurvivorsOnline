@@ -228,6 +228,7 @@ void Player_UpdateMovement(f32 deltaTime);
 void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr);
 void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE);
 void Player_RecalculateAttributes(void);
+void DrawStatsOverlay(void);
 //~ End of Player
 
 //~ Begin of Input
