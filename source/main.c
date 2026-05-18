@@ -32,11 +32,13 @@ int main(void) {
         return 1;
     }
 
-    // Initialize player weapons - Start with 1 random weapon
-    for (int i = 0; i < 5; i++) {
+    // Initialize player weapons and relics - Start with 1 random weapon
+    for (int i = 0; i < 4; i++) {
         globalVariables.playerWeapons[i].type = WEAPON_UNDEFINED;
+        globalVariables.playerRelics[i].type = RELIC_UNDEFINED;
+        globalVariables.playerRelics[i].level = 0;
     }
-    
+
     // Use current time as seed for randomness
     srand(time(NULL));
     WeaponType startingType = (WeaponType)((rand() % 5) + 1);
@@ -501,6 +503,57 @@ void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr) {
     Network_SendAttributeUpdate(state, attr);
 }
 
+void Player_RecalculateAttributes(void) {
+    PlayerAttributes attr = {
+        .maxHealth = DEFAULT_MAX_HEALTH,
+        .damage = DEFAULT_DAMAGE,
+        .attackSpeed = DEFAULT_ATTACK_SPEED,
+        .movementSpeed = DEFAULT_MOVEMENT_SPEED,
+        .size = DEFAULT_SIZE,
+        .xpGained = DEFAULT_XP_GAINED,
+        .lifeSteal = DEFAULT_LIFESTEAL
+    };
+
+    for (int i = 0; i < 4; i++) {
+        Relic* relic = &globalVariables.playerRelics[i];
+        if (relic->type == RELIC_UNDEFINED) continue;
+
+        switch (relic->type) {
+            case RELIC_HEALTH:
+                attr.maxHealth += DEFAULT_MAX_HEALTH * RELIC_LEVELUP_HEALTH * relic->level;
+                break;
+            case RELIC_DAMAGE:
+                attr.damage += RELIC_LEVELUP_DAMAGE * relic->level;
+                break;
+            case RELIC_ATTACK_SPEED:
+                attr.attackSpeed += RELIC_LEVELUP_ATTACKSPEED * relic->level;
+                break;
+            case RELIC_SIZE:
+                attr.size += RELIC_LEVELUP_SIZE * relic->level;
+                break;
+            case RELIC_MOVEMENT_SPEED:
+                attr.movementSpeed += RELIC_LEVELUP_MOVEMENTSPEED * relic->level;
+                break;
+            case RELIC_XP_GAIN:
+                attr.xpGained += RELIC_LEVELUP_XPGAIN * relic->level;
+                break;
+            case RELIC_LIFE_STEAL:
+                attr.lifeSteal += RELIC_LEVELUP_LIFESTEAL * relic->level;
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Proportional health adjustment when max health changes
+    f32 healthDiff = attr.maxHealth - currentConnectionState.maxHealth;
+    if (healthDiff != 0.0f) {
+        currentConnectionState.health += healthDiff;
+    }
+
+    Player_UpdateAttributes(&currentConnectionState, attr);
+}
+
 void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE) {
     u32 localIndex = (state->localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
     PlayerAttributes* attr = &state->playerAttributes[localIndex];
@@ -534,11 +587,11 @@ void Input_Update(InputState* state) {
         state->movementDirection = Vector2Normalize(state->movementDirection);
     }
     
-    // Handle Weapon Selection if active
+    // Handle Selection if active
     if (isChoosingUpgrade) {
-        if (IsKeyPressed(KEY_ONE)) { ApplyUpgrade(0); isChoosingUpgrade = false; }
-        if (IsKeyPressed(KEY_TWO) && upgradeOptions[1].type != WEAPON_UNDEFINED) { ApplyUpgrade(1); isChoosingUpgrade = false; }
-        if (IsKeyPressed(KEY_THREE) && upgradeOptions[2].type != WEAPON_UNDEFINED) { ApplyUpgrade(2); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_ONE) && upgradeOptions[0].type != 0) { ApplyUpgrade(0); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_TWO) && upgradeOptions[1].type != 0) { ApplyUpgrade(1); isChoosingUpgrade = false; }
+        if (IsKeyPressed(KEY_THREE) && upgradeOptions[2].type != 0) { ApplyUpgrade(2); isChoosingUpgrade = false; }
     }
 
     state->quitApplication = WindowShouldClose();
@@ -702,68 +755,160 @@ void Weapon_Upgrade(Weapon* w) {
     }
 }
 
-void GenerateUpgradeOptions(LevelUpOption options[3]) {
-    WeaponType allTypes[5] = { WEAPON_FIREBALL_RING, WEAPON_CRYSTAL_STAFF, WEAPON_DEATH_AURA, WEAPON_BOMB_SHOES, WEAPON_NATURE_SPIKES };
-    const char* names[6] = { "", "Fireball", "Crystal Staff", "Death Aura", "Bomb Shoes", "Nature Spikes" };
-    const char* descs[6] = { "", "Fiery explosions", "Piercing crystals", "Continuous damage aura", "Delayed explosions", "Spikes from the earth" };
-    Color colors[6] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
+typedef struct UpgradeCandidate {
+    bool isRelic;
+    u8 type;
+} UpgradeCandidate;
 
-    int ownedCount = 0;
-    WeaponType ownedTypes[4];
+void GenerateUpgradeOptions(LevelUpOption options[3]) {
+    UpgradeCandidate candidates[12];
+    int candidateCount = 0;
+
+    // Count owned weapons and relics
+    int ownedWeaponsCount = 0;
     for (int i = 0; i < 4; i++) {
         if (globalVariables.playerWeapons[i].type != WEAPON_UNDEFINED) {
-            ownedTypes[ownedCount++] = globalVariables.playerWeapons[i].type;
+            ownedWeaponsCount++;
         }
     }
 
-    WeaponType pool[5];
-    int poolCount = 0;
-    if (ownedCount >= 4) {
-        // Inventory full: Only upgrade existing
-        for (int i = 0; i < ownedCount; i++) pool[poolCount++] = ownedTypes[i];
-    } else {
-        // Inventory not full: Can pick anything
-        for (int i = 0; i < 5; i++) pool[poolCount++] = allTypes[i];
+    int ownedRelicsCount = 0;
+    for (int i = 0; i < 4; i++) {
+        if (globalVariables.playerRelics[i].type != RELIC_UNDEFINED) {
+            ownedRelicsCount++;
+        }
     }
 
-    // Shuffle pool to pick 3 unique
-    for (int i = 0; i < poolCount; i++) {
-        int r = i + rand() % (poolCount - i);
-        WeaponType temp = pool[i];
-        pool[i] = pool[r];
-        pool[r] = temp;
+    // 1. Gather Weapon candidates
+    for (int wType = 1; wType <= 5; wType++) {
+        int ownedIndex = -1;
+        for (int i = 0; i < 4; i++) {
+            if (globalVariables.playerWeapons[i].type == wType) {
+                ownedIndex = i;
+                break;
+            }
+        }
+        
+        if (ownedIndex != -1) {
+            // Owned: can upgrade if level < 15
+            if (globalVariables.playerWeapons[ownedIndex].level < 15) {
+                candidates[candidateCount++] = (UpgradeCandidate){ .isRelic = false, .type = (u8)wType };
+            }
+        } else {
+            // Not owned: can acquire if inventory not full
+            if (ownedWeaponsCount < 4) {
+                candidates[candidateCount++] = (UpgradeCandidate){ .isRelic = false, .type = (u8)wType };
+            }
+        }
     }
 
-    int countToGen = (poolCount < 3) ? poolCount : 3;
+    // 2. Gather Relic candidates
+    for (int rType = 1; rType <= 7; rType++) {
+        int ownedIndex = -1;
+        for (int i = 0; i < 4; i++) {
+            if (globalVariables.playerRelics[i].type == rType) {
+                ownedIndex = i;
+                break;
+            }
+        }
+        
+        if (ownedIndex != -1) {
+            // Owned: can upgrade if level < 5
+            if (globalVariables.playerRelics[ownedIndex].level < 5) {
+                candidates[candidateCount++] = (UpgradeCandidate){ .isRelic = true, .type = (u8)rType };
+            }
+        } else {
+            // Not owned: can acquire if inventory not full
+            if (ownedRelicsCount < 4) {
+                candidates[candidateCount++] = (UpgradeCandidate){ .isRelic = true, .type = (u8)rType };
+            }
+        }
+    }
+
+    // Shuffle candidate pool
+    for (int i = 0; i < candidateCount; i++) {
+        int r = i + rand() % (candidateCount - i);
+        UpgradeCandidate temp = candidates[i];
+        candidates[i] = candidates[r];
+        candidates[r] = temp;
+    }
+
+    int countToGen = (candidateCount < 3) ? candidateCount : 3;
     for (int i = 0; i < 3; i++) {
         if (i < countToGen) {
-            WeaponType selected = pool[i];
-            options[i].type = selected;
-            options[i].name = names[selected];
-            options[i].description = descs[selected];
-            options[i].color = colors[selected];
+            UpgradeCandidate selected = candidates[i];
+            options[i].isRelic = selected.isRelic;
+            options[i].type = selected.type;
+
+            if (selected.isRelic) {
+                const char* relicNames[] = { "", "Relic of Health", "Relic of Damage", "Relic of Attack Speed", "Relic of Size", "Relic of Movement Speed", "Relic of XP Gain", "Relic of Lifesteal" };
+                const char* relicDescs[] = { "", "Increases Max Health (+12%)", "Increases Damage (+8%)", "Increases Attack Speed (+6%)", "Increases Size (+15%)", "Increases Speed (+9%)", "Increases XP Gained (+8%)", "Increases Lifesteal (+1%)" };
+                Color relicColors[] = { WHITE, RED, ORANGE, GOLD, PURPLE, LIME, PINK, VIOLET };
+
+                options[i].name = relicNames[selected.type];
+                options[i].description = relicDescs[selected.type];
+                options[i].color = relicColors[selected.type];
+            } else {
+                const char* weaponNames[] = { "", "Fireball", "Crystal Staff", "Death Aura", "Bomb Shoes", "Nature Spikes" };
+                const char* weaponDescs[] = { "", "Fiery explosions", "Piercing crystals", "Continuous damage aura", "Delayed explosions", "Spikes from the earth" };
+                Color weaponColors[] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
+
+                options[i].name = weaponNames[selected.type];
+                options[i].description = weaponDescs[selected.type];
+                options[i].color = weaponColors[selected.type];
+            }
         } else {
-            options[i].type = WEAPON_UNDEFINED;
+            options[i].isRelic = false;
+            options[i].type = 0; // Undefined
+            options[i].name = "";
+            options[i].description = "";
+            options[i].color = BLANK;
         }
     }
 }
 
 void ApplyUpgrade(int optionIndex) {
-    WeaponType type = upgradeOptions[optionIndex].type;
-    
-    // Check if we already have it
-    for (int i = 0; i < 4; i++) {
-        if (globalVariables.playerWeapons[i].type == type) {
-            Weapon_Upgrade(&globalVariables.playerWeapons[i]);
-            return;
+    LevelUpOption option = upgradeOptions[optionIndex];
+    if (option.type == 0) return;
+
+    if (option.isRelic) {
+        RelicType type = (RelicType)option.type;
+        // Check if we already have it
+        for (int i = 0; i < 4; i++) {
+            if (globalVariables.playerRelics[i].type == type) {
+                if (globalVariables.playerRelics[i].level < 5) {
+                    globalVariables.playerRelics[i].level++;
+                    Player_RecalculateAttributes();
+                }
+                return;
+            }
         }
-    }
-    
-    // Find empty slot
-    for (int i = 0; i < 4; i++) {
-        if (globalVariables.playerWeapons[i].type == WEAPON_UNDEFINED) {
-            Weapon_Initialize(&globalVariables.playerWeapons[i], type);
-            return;
+        
+        // Find empty slot
+        for (int i = 0; i < 4; i++) {
+            if (globalVariables.playerRelics[i].type == RELIC_UNDEFINED) {
+                globalVariables.playerRelics[i].type = type;
+                globalVariables.playerRelics[i].level = 1;
+                Player_RecalculateAttributes();
+                return;
+            }
+        }
+    } else {
+        WeaponType type = (WeaponType)option.type;
+        // Check if we already have it
+        for (int i = 0; i < 4; i++) {
+            if (globalVariables.playerWeapons[i].type == type) {
+                Weapon_Upgrade(&globalVariables.playerWeapons[i]);
+                return;
+            }
+        }
+        
+        // Find empty slot
+        for (int i = 0; i < 4; i++) {
+            if (globalVariables.playerWeapons[i].type == WEAPON_UNDEFINED) {
+                Weapon_Initialize(&globalVariables.playerWeapons[i], type);
+                return;
+            }
         }
     }
 }
@@ -777,7 +922,7 @@ void DrawUpgradeCards(void) {
     float startY = SCREEN_HEIGHT - cardHeight - 20.0f;
     
     for (int i = 0; i < 3; i++) {
-        if (upgradeOptions[i].type == WEAPON_UNDEFINED) continue;
+        if (upgradeOptions[i].type == 0) continue;
         
         Rectangle card = { startX + i * (cardWidth + spacing), startY, cardWidth, cardHeight };
         
@@ -789,19 +934,31 @@ void DrawUpgradeCards(void) {
         DrawText(TextFormat("[%d] SELECT", i + 1), card.x + 10, card.y + 10, 16, YELLOW);
         DrawText(upgradeOptions[i].name, card.x + 10, card.y + 35, 20, WHITE);
         
-        // Find current level if owned
         int currentLv = 0;
-        for (int j = 0; j < 4; j++) {
-            if (globalVariables.playerWeapons[j].type == upgradeOptions[i].type) {
-                currentLv = globalVariables.playerWeapons[j].level;
-                break;
+        if (upgradeOptions[i].isRelic) {
+            for (int j = 0; j < 4; j++) {
+                if (globalVariables.playerRelics[j].type == upgradeOptions[i].type) {
+                    currentLv = globalVariables.playerRelics[j].level;
+                    break;
+                }
             }
-        }
-        
-        if (currentLv > 0) {
-            DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 60, 16, GREEN);
+            if (currentLv > 0) {
+                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 60, 16, GREEN);
+            } else {
+                DrawText("NEW RELIC", card.x + 10, card.y + 60, 16, PINK);
+            }
         } else {
-            DrawText("NEW WEAPON", card.x + 10, card.y + 60, 16, SKYBLUE);
+            for (int j = 0; j < 4; j++) {
+                if (globalVariables.playerWeapons[j].type == upgradeOptions[i].type) {
+                    currentLv = globalVariables.playerWeapons[j].level;
+                    break;
+                }
+            }
+            if (currentLv > 0) {
+                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 60, 16, GREEN);
+            } else {
+                DrawText("NEW WEAPON", card.x + 10, card.y + 60, 16, SKYBLUE);
+            }
         }
         
         // Small Color Box

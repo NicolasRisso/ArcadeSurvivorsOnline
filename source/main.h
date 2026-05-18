@@ -42,6 +42,22 @@
 
 #define MAX_ENTITY_AMOUNT 20000
 
+#define DEFAULT_MAX_HEALTH 100.0f
+#define DEFAULT_DAMAGE 1.0f
+#define DEFAULT_ATTACK_SPEED 1.0f
+#define DEFAULT_MOVEMENT_SPEED 1.0f
+#define DEFAULT_SIZE 1.0f
+#define DEFAULT_XP_GAINED 1.0f
+#define DEFAULT_LIFESTEAL 0.0f
+
+#define RELIC_LEVELUP_HEALTH 0.12f
+#define RELIC_LEVELUP_DAMAGE 0.08f
+#define RELIC_LEVELUP_ATTACKSPEED 0.06f
+#define RELIC_LEVELUP_SIZE 0.15f
+#define RELIC_LEVELUP_MOVEMENTSPEED 0.09f
+#define RELIC_LEVELUP_XPGAIN 0.08f
+#define RELIC_LEVELUP_LIFESTEAL 0.01f
+
 //~ Begin of Utility Structs
 typedef struct f32Range { f32 minimum; f32 maximum; } f32Range;
 typedef struct u16Range { u16 minimum; u16 maximum; } u16Range;
@@ -78,6 +94,25 @@ typedef enum CharacterType : u8 {
     CHARACTER_PLAYER = 1,
     CHARACTER_ENEMY = 2
 } CharacterType;
+
+typedef enum RelicType : u8 {
+    RELIC_UNDEFINED = 0,
+    RELIC_HEALTH = 1,
+    RELIC_DAMAGE = 2,
+    RELIC_ATTACK_SPEED = 3,
+    RELIC_SIZE = 4,
+    RELIC_MOVEMENT_SPEED = 5,
+    RELIC_XP_GAIN = 6,
+    RELIC_LIFE_STEAL = 7
+} RelicType;
+
+#define MAX_RELIC_LEVEL 5
+
+typedef struct Relic {
+    RelicType type;
+    u8 level;
+} Relic;
+
 
 //~ Begin of Structs
 typedef struct Character{
@@ -150,16 +185,9 @@ typedef struct PlayerAttributes {
     f32 lifeSteal;
 } PlayerAttributes;
 
-#define DEFAULT_MAX_HEALTH 100.0f
-#define DEFAULT_DAMAGE 1.0f
-#define DEFAULT_ATTACK_SPEED 1.0f
-#define DEFAULT_MOVEMENT_SPEED 1.0f
-#define DEFAULT_SIZE 1.0f
-#define DEFAULT_XP_GAINED 1.0f
-#define DEFAULT_LIFESTEAL 0.0f
-
 typedef struct LevelUpOption {
-    WeaponType type;
+    bool isRelic;
+    u8 type;
     const char* name;
     const char* description;
     Color color;
@@ -178,6 +206,8 @@ typedef struct Entity{
 typedef struct GlobalVariables{
     Entity entities[MAX_ENTITY_AMOUNT];
     Weapon playerWeapons[4];
+    Relic playerRelics[4];
+    PlayerAttributes playerAttributes[MAX_PLAYERS];
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
@@ -196,6 +226,7 @@ typedef struct ConnectionState ConnectionState;
 void Player_UpdateMovement(f32 deltaTime);
 void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr);
 void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE);
+void Player_RecalculateAttributes(void);
 //~ End of Player
 
 //~ Begin of Input
