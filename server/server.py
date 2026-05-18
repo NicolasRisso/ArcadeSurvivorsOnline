@@ -548,9 +548,25 @@ class Server:
                             self.spawn_projectile(ENTITY_PROJECTILE, PROJECTILE_FIREBALL, px, py, vx, vy, player_id, damage, radius)
                             
                     elif weaponType == WEAPON_CRYSTAL_STAFF:
+                        # Find closest enemy to aim staff at
+                        closest_enemy = None
+                        min_dist = float("inf")
+                        for ent in self.entities.values():
+                            if ent["type"] == ENTITY_CHARACTER and ent["charType"] == CHARACTER_ENEMY:
+                                dx = ent["position_x"] - px
+                                dy = ent["position_y"] - py
+                                dist = math.sqrt(dx*dx + dy*dy)
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    closest_enemy = ent
+                                    
+                        base_angle = 0.0
+                        if closest_enemy:
+                            base_angle = math.atan2(closest_enemy["position_y"] - py, closest_enemy["position_x"] - px)
+                            
                         num = extra if extra > 0 else 1
                         for i in range(num):
-                            angle = (i - (num-1)/2.0) * 0.2
+                            angle = base_angle + (i - (num-1)/2.0) * 0.2
                             vx = math.cos(angle) * 600
                             vy = math.sin(angle) * 600
                             self.spawn_projectile(ENTITY_PROJECTILE, PROJECTILE_CRYSTAL, px, py, vx, vy, player_id, damage, radius)
