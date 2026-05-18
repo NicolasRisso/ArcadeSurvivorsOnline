@@ -95,21 +95,21 @@ ENEMY_AVOIDANCE_FORCE = 0.5
 
 # Spawner Config
 SPAWN_INTERVAL = 1.75
-# Shapes: (weight, min_count, max_count, min_dist, max_dist, enemy_class)
+# Shapes: (weight, min_count, max_count, min_dist, max_dist, enemy_class, unlock_difficulty)
 SPAWN_CONFIG = {
-    "SINGLE": (20, 1, 1, 400, 600, ENEMY_CLASS_NORMAL),
-    "CIRCLE": (5, 8, 14, 700, 900, ENEMY_CLASS_NORMAL),
-    "WALL": (3, 6, 12, 800, 1000, ENEMY_CLASS_NORMAL),
-    "CLUSTER": (6, 5, 10, 500, 800, ENEMY_CLASS_NORMAL),
+    "SINGLE": (20, 1, 1, 400, 600, ENEMY_CLASS_NORMAL, 0.0),
+    "CIRCLE": (5, 8, 14, 700, 900, ENEMY_CLASS_NORMAL, 10.0),
+    "WALL": (3, 6, 12, 800, 1000, ENEMY_CLASS_NORMAL, 20.0),
+    "CLUSTER": (6, 5, 10, 500, 800, ENEMY_CLASS_NORMAL, 2.0),
     
     # Fast groups
-    "SINGLE_FAST": (15, 1, 3, 400, 600, ENEMY_CLASS_FAST),
-    "CIRCLE_FAST": (3, 6, 10, 700, 900, ENEMY_CLASS_FAST),
-    "CLUSTER_FAST": (5, 4, 8, 500, 800, ENEMY_CLASS_FAST),
+    "SINGLE_FAST": (15, 1, 3, 400, 600, ENEMY_CLASS_FAST, 5.0),
+    "CIRCLE_FAST": (3, 6, 10, 700, 900, ENEMY_CLASS_FAST, 25.0),
+    "CLUSTER_FAST": (5, 4, 8, 500, 800, ENEMY_CLASS_FAST, 15.0),
     
     # Tank groups
-    "SINGLE_TANK": (10, 1, 1, 400, 600, ENEMY_CLASS_TANK),
-    "CLUSTER_TANK": (3, 2, 4, 500, 800, ENEMY_CLASS_TANK),
+    "SINGLE_TANK": (10, 1, 1, 400, 600, ENEMY_CLASS_TANK, 30.0),
+    "CLUSTER_TANK": (3, 2, 4, 500, 800, ENEMY_CLASS_TANK, 40.0),
 }
 
 # Struct Formats (Little Endian, Packed)
@@ -146,6 +146,8 @@ class Server:
         self.broadcastInterval = 0.05 
         self.log_buffer = []
         self.last_log_flush_time = time.time()
+        self.start_time = None
+        self.difficulty = 0.0
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
     def log(self, message):
@@ -315,22 +317,38 @@ class Server:
                     self.broadcast_despawn(index)
 
     def update_spawner(self, current_time):
+        if not self.players:
+            self.start_time = None
+            self.difficulty = 0.0
+            return
+
         if current_time - self.last_spawner_time < SPAWN_INTERVAL:
             return
         
         if len(self.entities) >= MAX_ENEMIES:
             return
 
-        if not self.players:
-            return
-            
         self.last_spawner_time = current_time
+
+        if self.start_time is None:
+            self.start_time = current_time
         
-        # Spawn a random group for each player
-        available_shapes = list(SPAWN_CONFIG.keys())
+        self.difficulty = (current_time - self.start_time) / 6.0
+        
+        # Filter available spawn groups based on difficulty progression
+        filtered_shapes = []
+        for shape, config in SPAWN_CONFIG.items():
+            unlock_diff = config[6]
+            if self.difficulty >= unlock_diff:
+                filtered_shapes.append(shape)
+        if not filtered_shapes:
+            filtered_shapes = ["SINGLE"]
+
+        # Spawn a random group for each player from the unlocked shapes
+        available_shapes = list(filtered_shapes)
         for player in self.players.values():
             if not available_shapes:
-                available_shapes = list(SPAWN_CONFIG.keys())
+                available_shapes = list(filtered_shapes)
             
             # Weighted random selection from available shapes (to avoid immediate repeats)
             weights = [SPAWN_CONFIG[s][0] for s in available_shapes]
@@ -343,7 +361,7 @@ class Server:
         px, py = target_player["position_x"], target_player["position_y"]
         
         # 3. Determine count and base distance from config
-        _, min_c, max_c, min_d, max_d, enemy_class = SPAWN_CONFIG[shape]
+        _, min_c, max_c, min_d, max_d, enemy_class, _ = SPAWN_CONFIG[shape]
         count = random.randint(min_c, max_c)
         distance = random.uniform(min_d, max_d)
         
@@ -396,8 +414,17 @@ class Server:
             xp_value = 40.0
         elif enemy_class == ENEMY_CLASS_TANK:
             hp = ENEMY_HEALTH * 3.0
-            speed = 90.0
+            speed = 45.0  # Slower tank: half of 90.0
             xp_value = 100.0
+            
+        # Apply progressive difficulty scaling
+        stat_mult = 1.0 + (self.difficulty / 20.0) * 1.25
+        xp_mult = 1.0 + (self.difficulty / 30.0) * 1.25
+        speed_mult = 1.0 + (self.difficulty / 20.0) * 1.05
+        
+        hp *= stat_mult
+        speed *= speed_mult
+        xp_value *= xp_mult
         
         # 4. Spawn the entities
         for rx, ry in positions:
@@ -538,7 +565,10 @@ class Server:
                                             break
                                             
                                 if enemy_found:
-                                    target_player["health"] -= damage
+                                    stat_mult = 1.0 + (self.difficulty / 20.0) * 1.25
+                                    expected_damage = 10.0 * stat_mult
+                                    
+                                    target_player["health"] -= expected_damage
                                     target_player["iframe_until"] = current_time + 0.5
                                     if target_player["health"] <= 0.0:
                                         max_health = target_player.get("attributes", [100.0])[0] if target_player.get("attributes") else 100.0
@@ -551,7 +581,7 @@ class Server:
                                         print(f"[DEATH] Authoritative server respawned Player {eIndex} instantly at (0, 0)")
                                     else:
                                         # Broadcast damage to other players so they display the damage visual effect!
-                                        self.broadcast_damage(eIndex, damage, 0)
+                                        self.broadcast_damage(eIndex, expected_damage, 0)
                         
                         elif eIndex in self.entities:
                             entity = self.entities[eIndex]

@@ -9,6 +9,7 @@ ConnectionState currentConnectionState = { 0 };
 f32 playerXP = 0.0f;
 f32 xpToNextLevel = 100.0f;
 u16 playerLevel = 1;
+f32 gameTime = 0.0f;
 
 void DrawXPBar(void);
 
@@ -57,6 +58,12 @@ int main(void) {
         Input_Update(&currentInputState);
 
         f32 deltaTime = GetFrameTime();
+        
+        if (currentConnectionState.isConnected) {
+            gameTime += deltaTime;
+        } else {
+            gameTime = 0.0f;
+        }
 
         // Predict and Interpolate movement and count down visual timers for characters
         for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
@@ -649,11 +656,15 @@ void Player_UpdateMovement(f32 deltaTime) {
                 enemy->character.health > 0) {
                 
                 if (CheckCollisionCircles(currentConnectionState.localPosition, PLAYER_RADIUS, enemy->character.position, PLAYER_RADIUS)) {
-                    currentConnectionState.health -= 10.0f;
+                    f32 clientDifficulty = gameTime / 6.0f;
+                    f32 stat_mult = 1.0f + (clientDifficulty / 20.0f) * 1.25f;
+                    f32 predictedDamage = 10.0f * stat_mult;
+                    
+                    currentConnectionState.health -= predictedDamage;
                     currentConnectionState.iframeTimer = 0.5f;
                     currentConnectionState.damageFlashTimer = 0.5f;
                     
-                    Network_SendDamage(&currentConnectionState, currentConnectionState.localPlayerIdentification, 10.0f);
+                    Network_SendDamage(&currentConnectionState, currentConnectionState.localPlayerIdentification, predictedDamage);
                     break;
                 }
             }
