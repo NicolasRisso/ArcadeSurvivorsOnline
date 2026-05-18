@@ -58,7 +58,7 @@ int main(void) {
 
         f32 deltaTime = GetFrameTime();
 
-        // Predict and Interpolate movement for characters
+        // Predict and Interpolate movement and count down visual timers for characters
         for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
             Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
             if (entity->entityType == ENTITY_CHARACTER) {
@@ -69,7 +69,22 @@ int main(void) {
                 entity->character.targetPosition.y += entity->character.velocity.y * deltaTime;
                 
                 entity->character.position = Vector2Lerp(entity->character.position, entity->character.targetPosition, 0.25f);
+                
+                if (entity->character.damageFlashTimer > 0) {
+                    entity->character.damageFlashTimer -= deltaTime;
+                    if (entity->character.damageFlashTimer < 0) entity->character.damageFlashTimer = 0;
+                }
             }
+        }
+        
+        // Count down local player visual & invulnerability timers
+        if (currentConnectionState.damageFlashTimer > 0) {
+            currentConnectionState.damageFlashTimer -= deltaTime;
+            if (currentConnectionState.damageFlashTimer < 0) currentConnectionState.damageFlashTimer = 0;
+        }
+        if (currentConnectionState.iframeTimer > 0) {
+            currentConnectionState.iframeTimer -= deltaTime;
+            if (currentConnectionState.iframeTimer < 0) currentConnectionState.iframeTimer = 0;
         }
 
         Enemy_UpdateMovement(deltaTime);
@@ -164,6 +179,15 @@ int main(void) {
 
                 if (currentConnectionState.isConnected) {
                     DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
+                    
+                    // Draw local player high-frequency pulse damage flash if timer is active
+                    if (currentConnectionState.damageFlashTimer > 0) {
+                        f32 flashAlpha = (sinf(currentConnectionState.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
+                        if (flashAlpha > 0.0f) {
+                            DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                        }
+                    }
+                    
                     DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
                     
                     // Draw local player's death aura
@@ -488,6 +512,26 @@ void Player_UpdateMovement(f32 deltaTime) {
     currentConnectionState.localPosition.x += movementVelocity.x * deltaTime;
     currentConnectionState.localPosition.y += movementVelocity.y * deltaTime;
     
+    // Local player-enemy collision damage prediction
+    if (currentConnectionState.iframeTimer <= 0) {
+        for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {
+            Entity* enemy = &currentConnectionState.remoteEntities[enemyIndex];
+            if (enemy->entityType == ENTITY_CHARACTER && 
+                enemy->character.characterType == CHARACTER_ENEMY && 
+                enemy->character.health > 0) {
+                
+                if (CheckCollisionCircles(currentConnectionState.localPosition, PLAYER_RADIUS, enemy->character.position, PLAYER_RADIUS)) {
+                    currentConnectionState.health -= 10.0f;
+                    currentConnectionState.iframeTimer = 0.5f;
+                    currentConnectionState.damageFlashTimer = 0.5f;
+                    
+                    Network_SendDamage(&currentConnectionState, currentConnectionState.localPlayerIdentification, 10.0f);
+                    break;
+                }
+            }
+        }
+    }
+    
     Network_SendVelocity(&currentConnectionState, movementVelocity);
 }
 
@@ -556,6 +600,7 @@ void Player_RecalculateAttributes(void) {
 }
 
 void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE) {
+    if (state->iframeTimer > 0) return; // Cannot heal from lifesteal while iframed
     u32 localIndex = (state->localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
     PlayerAttributes* attr = &state->playerAttributes[localIndex];
     if (attr->lifeSteal <= 0) return;
@@ -610,6 +655,14 @@ void Render_Entity(const Entity* entity) {
             if (entity->character.characterType == CHARACTER_PLAYER) {
                 DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
                 DrawText("PLAYER", entity->character.position.x - 20, entity->character.position.y - 40, 10, MAROON);
+                
+                // Draw remote player high-frequency pulse damage flash if timer is active
+                if (entity->character.damageFlashTimer > 0) {
+                    f32 flashAlpha = (sinf(entity->character.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
+                    if (flashAlpha > 0.0f) {
+                        DrawCircleV(entity->character.position, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                    }
+                }
             } else if (entity->character.characterType == CHARACTER_ENEMY) {
                 DrawCircleV(entity->character.position, PLAYER_RADIUS, PURPLE);
                 // Draw HP Bar
@@ -617,6 +670,15 @@ void Render_Entity(const Entity* entity) {
                 DrawRectangle(entity->character.position.x - 20, entity->character.position.y - 30, 40, 5, DARKGRAY);
                 DrawRectangle(entity->character.position.x - 20, entity->character.position.y - 30, (int)(40 * hpPercent), 5, GREEN);
                 DrawText("ENEMY", entity->character.position.x - 20, entity->character.position.y - 45, 10, PURPLE);
+                
+                // Draw enemy smooth ease-in/ease-out damage flash if timer is active
+                if (entity->character.damageFlashTimer > 0) {
+                    f32 t = entity->character.damageFlashTimer / 0.15f;
+                    f32 flashAlpha = sinf(t * 3.14159265f);
+                    if (flashAlpha > 0.0f) {
+                        DrawCircleV(entity->character.position, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                    }
+                }
             }
             break;
         case ENTITY_PROJECTILE:

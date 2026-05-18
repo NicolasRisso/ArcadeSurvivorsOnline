@@ -68,6 +68,7 @@ typedef struct {
     Vector2 position;
     Vector2 velocity;
     u8 weaponsMask;
+    f32 health;
 } RemotePlayerState;
 
 typedef struct {
@@ -159,6 +160,9 @@ typedef struct ConnectionState {
     f64 lastHeartbeatSent;
     f64 lastHeartbeatReceived;
     f64 lastVelocitySentTime;
+    
+    f32 damageFlashTimer;
+    f32 iframeTimer;
     
     PlayerAttributes playerAttributes[MAX_REMOTE_PLAYERS];
     Entity remoteEntities[MAX_REMOTE_ENTITIES];

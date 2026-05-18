@@ -43,6 +43,8 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->pendingDamageCount = 0;
     connectionState->health = DEFAULT_MAX_HEALTH;
     connectionState->maxHealth = DEFAULT_MAX_HEALTH;
+    connectionState->damageFlashTimer = 0.0f;
+    connectionState->iframeTimer = 0.0f;
 
     for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
         connectionState->playerAttributes[i] = (PlayerAttributes){
@@ -115,6 +117,10 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     if (remotePlayerState->identification == connectionState->localPlayerIdentification) {
                         // Reconcile local position with server
                         connectionState->localPosition = Vector2Lerp(connectionState->localPosition, remotePlayerState->position, 0.5f);
+                        // Authoritative health reconciliation
+                        if (connectionState->health != remotePlayerState->health) {
+                            connectionState->health = remotePlayerState->health;
+                        }
                         continue;
                     }
 
@@ -125,6 +131,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     connectionState->remoteEntities[entityIndex].character.position = remotePlayerState->position;
                     connectionState->remoteEntities[entityIndex].character.targetPosition = remotePlayerState->position;
                     connectionState->remoteEntities[entityIndex].character.weaponsMask = remotePlayerState->weaponsMask; 
+                    connectionState->remoteEntities[entityIndex].character.health = remotePlayerState->health; 
                 }
                 break;
             }
@@ -188,11 +195,30 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             }
             case PACKET_ENTITY_DAMAGE: {
                 PacketEntityDamage* damagePacket = (PacketEntityDamage*)receiveBuffer;
-                u32 entityIndex = damagePacket->entityIndex % MAX_REMOTE_ENTITIES;
-                if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
-                    // Prediction: Ignore damage from ourselves (already applied)
-                    if (damagePacket->header.playerIdentification != connectionState->localPlayerIdentification) {
-                        connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
+                u32 targetID = damagePacket->entityIndex;
+                
+                // 1. Local Player took damage (verified from server)
+                if (targetID == connectionState->localPlayerIdentification) {
+                    if (connectionState->iframeTimer <= 0) {
+                        connectionState->health -= damagePacket->damage;
+                        connectionState->iframeTimer = 0.5f;
+                        connectionState->damageFlashTimer = 0.5f;
+                    }
+                } else {
+                    // 2. Remote Player or Enemy took damage
+                    u32 entityIndex = targetID % MAX_REMOTE_ENTITIES;
+                    if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER) {
+                        if (connectionState->remoteEntities[entityIndex].character.characterType == CHARACTER_PLAYER) {
+                            connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
+                            connectionState->remoteEntities[entityIndex].character.damageFlashTimer = 0.5f;
+                        } else {
+                            // Enemy took damage
+                            // Prediction: Ignore damage from ourselves (already applied)
+                            if (damagePacket->header.playerIdentification != connectionState->localPlayerIdentification) {
+                                connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
+                            }
+                            connectionState->remoteEntities[entityIndex].character.damageFlashTimer = 0.15f;
+                        }
                     }
                 }
                 break;

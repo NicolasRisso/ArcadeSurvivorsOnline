@@ -126,6 +126,7 @@ typedef struct Character{
     f32 health;
     f32 maxHealth;
     u8 weaponsMask;
+    f32 damageFlashTimer;
 } Character;
 
 typedef struct Projectile {

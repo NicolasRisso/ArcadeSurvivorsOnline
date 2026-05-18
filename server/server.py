@@ -103,7 +103,7 @@ HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ffff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
-PLAYER_STATE_FORMAT = "IffffB"
+PLAYER_STATE_FORMAT = "IffffBf"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffffi"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
 SINGLE_SNAPSHOT_FORMAT = "ff"
@@ -386,7 +386,9 @@ class Server:
                     "velocity_y": 0.0,
                     "lastHeartbeatReceived": time.time(),
                     "weapons_mask": 0,
-                    "attributes": (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0)
+                    "attributes": (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0),
+                    "health": 100.0,
+                    "iframe_until": 0.0
                 }
                 print(f"New player {newIdentification} connected from {address}")
             
@@ -498,7 +500,32 @@ class Server:
             if address in self.players:
                 if len(data) >= struct.calcsize(ENTITY_DAMAGE_FORMAT):
                     _, _, _, eIndex, damage = struct.unpack(ENTITY_DAMAGE_FORMAT, data[:struct.calcsize(ENTITY_DAMAGE_FORMAT)])
-                    if eIndex in self.entities:
+                    
+                    # 1. Local Player taking damage (Validation request)
+                    if eIndex == playerIdentification:
+                        player = self.players[address]
+                        current_time = time.time()
+                        if current_time >= player.get("iframe_until", 0.0):
+                            # Verify if any active enemy is close to the player to validate collision
+                            px, py = player["position_x"], player["position_y"]
+                            enemy_found = False
+                            for ent in self.entities.values():
+                                if ent["type"] == ENTITY_CHARACTER and ent["charType"] == CHARACTER_ENEMY:
+                                    dx = px - ent["position_x"]
+                                    dy = py - ent["position_y"]
+                                    dist = math.sqrt(dx*dx + dy*dy)
+                                    if dist <= 80.0: # generous threshold to account for network latency/interpolation
+                                        enemy_found = True
+                                        break
+                            
+                            if enemy_found:
+                                player["health"] -= damage
+                                player["iframe_until"] = current_time + 0.5
+                                # Broadcast to other players so they display the damage visual effect on this player!
+                                self.broadcast_damage(playerIdentification, damage, 0)
+                    
+                    # 2. Enemy taking damage
+                    elif eIndex in self.entities:
                         entity = self.entities[eIndex]
                         if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                             entity["health"] -= damage
@@ -527,6 +554,16 @@ class Server:
                 if len(data) >= struct.calcsize(ATTRIBUTE_UPDATE_FORMAT):
                     unpacked = struct.unpack(ATTRIBUTE_UPDATE_FORMAT, data[:struct.calcsize(ATTRIBUTE_UPDATE_FORMAT)])
                     attributes = unpacked[3:] # fffffff
+                    
+                    # Proportional health adjustment
+                    old_max = self.players[address]["attributes"][0]
+                    new_max = attributes[0]
+                    diff = new_max - old_max
+                    if diff != 0:
+                        self.players[address]["health"] += diff
+                        if self.players[address]["health"] > new_max:
+                            self.players[address]["health"] = new_max
+                    
                     self.players[address]["attributes"] = attributes
                     print(f"Player {playerIdentification} updated attributes: {attributes}")
                     # Broadcast to others
@@ -667,7 +704,8 @@ class Server:
                                           player["identification"], 
                                           player["position_x"], player["position_y"],
                                           player["velocity_x"], player["velocity_y"],
-                                          player.get("weapons_mask", 0))
+                                          player.get("weapons_mask", 0),
+                                          player.get("health", 100.0))
 
         for address in self.players:
             self.serverSocket.sendto(worldStateData, address)
