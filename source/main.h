@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
 #include "modern_types.h"
 #include "raylib.h"
 #include "raymath.h"

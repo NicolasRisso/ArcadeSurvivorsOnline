@@ -932,7 +932,42 @@ void DrawUpgradeCards(void) {
         
         // Draw Header
         DrawText(TextFormat("[%d] SELECT", i + 1), card.x + 10, card.y + 10, 16, YELLOW);
-        DrawText(upgradeOptions[i].name, card.x + 10, card.y + 35, 20, WHITE);
+        
+        // Securely tokenize and wrap name within 140px next to the icon
+        int titleFontSize = 16;
+        int currentY = card.y + 35;
+        
+        char nameBuffer[128];
+        strncpy(nameBuffer, upgradeOptions[i].name, sizeof(nameBuffer) - 1);
+        nameBuffer[sizeof(nameBuffer) - 1] = '\0';
+        
+        char line[128] = "";
+        char* word = strtok(nameBuffer, " ");
+        while (word != NULL) {
+            char testLine[256];
+            if (strlen(line) == 0) {
+                strcpy(testLine, word);
+            } else {
+                sprintf(testLine, "%s %s", line, word);
+            }
+            
+            if (MeasureText(testLine, titleFontSize) > 140) {
+                DrawText(line, card.x + 10, currentY, titleFontSize, WHITE);
+                currentY += titleFontSize + 2;
+                strcpy(line, word);
+            } else {
+                strcpy(line, testLine);
+            }
+            word = strtok(NULL, " ");
+        }
+        if (strlen(line) > 0) {
+            DrawText(line, card.x + 10, currentY, titleFontSize, WHITE);
+            currentY += titleFontSize + 2;
+        }
+        
+        // Dynamically compute subsequent positions
+        float levelY = currentY + 5.0f;
+        float descY = levelY + 25.0f;
         
         int currentLv = 0;
         if (upgradeOptions[i].isRelic) {
@@ -943,9 +978,9 @@ void DrawUpgradeCards(void) {
                 }
             }
             if (currentLv > 0) {
-                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 60, 16, GREEN);
+                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, levelY, 16, GREEN);
             } else {
-                DrawText("NEW RELIC", card.x + 10, card.y + 60, 16, PINK);
+                DrawText("NEW RELIC", card.x + 10, levelY, 16, PINK);
             }
         } else {
             for (int j = 0; j < 4; j++) {
@@ -955,9 +990,9 @@ void DrawUpgradeCards(void) {
                 }
             }
             if (currentLv > 0) {
-                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, card.y + 60, 16, GREEN);
+                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, levelY, 16, GREEN);
             } else {
-                DrawText("NEW WEAPON", card.x + 10, card.y + 60, 16, SKYBLUE);
+                DrawText("NEW WEAPON", card.x + 10, levelY, 16, SKYBLUE);
             }
         }
         
@@ -966,6 +1001,6 @@ void DrawUpgradeCards(void) {
         DrawRectangleLines(card.x + 160, card.y + 35, 40, 40, WHITE);
         
         // Draw Description
-        DrawText(upgradeOptions[i].description, card.x + 10, card.y + 90, 14, GRAY);
+        DrawText(upgradeOptions[i].description, card.x + 10, descY, 14, GRAY);
     }
 }
