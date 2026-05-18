@@ -231,6 +231,34 @@ int main(void) {
 }
 
 // --- Enemy Implementation ---
+u32 GetAlternativeTargetPlayerID(u32 deadPlayerID, u32 enemyIndex) {
+    u32 alivePlayers[4];
+    u32 aliveCount = 0;
+    
+    // Check if local player is alive
+    if (currentConnectionState.isConnected && currentConnectionState.health > 0.0f) {
+        alivePlayers[aliveCount++] = currentConnectionState.localPlayerIdentification;
+    }
+    
+    // Check if remote players are alive
+    for (u32 i = 1; i <= 4; i++) {
+        if (i == currentConnectionState.localPlayerIdentification) continue;
+        
+        Entity* remotePlayer = &currentConnectionState.remoteEntities[i];
+        if (remotePlayer->entityType == ENTITY_CHARACTER && 
+            remotePlayer->character.characterType == CHARACTER_PLAYER && 
+            remotePlayer->character.health > 0.0f) {
+            alivePlayers[aliveCount++] = i;
+        }
+    }
+    
+    // If no players are alive, return the original target
+    if (aliveCount == 0) return deadPlayerID;
+    
+    // Select one of the alive players deterministically based on enemyIndex % aliveCount
+    return alivePlayers[enemyIndex % aliveCount];
+}
+
 void Enemy_UpdateMovement(f32 deltaTime) {
     for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
         Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
@@ -241,6 +269,28 @@ void Enemy_UpdateMovement(f32 deltaTime) {
             bool targetFound = false;
 
             if (entity->character.targetPlayerID != 0) {
+                // If target player is dead, select alternative alive player deterministically
+                u32 currentTargetID = entity->character.targetPlayerID;
+                bool targetIsDead = false;
+                
+                if (currentTargetID == currentConnectionState.localPlayerIdentification) {
+                    if (currentConnectionState.health <= 0.0f) {
+                        targetIsDead = true;
+                    }
+                } else {
+                    u32 targetIndex = currentTargetID % MAX_REMOTE_ENTITIES;
+                    Entity* targetPlayer = &currentConnectionState.remoteEntities[targetIndex];
+                    if (targetPlayer->entityType == ENTITY_CHARACTER && 
+                        targetPlayer->character.characterType == CHARACTER_PLAYER && 
+                        targetPlayer->character.health <= 0.0f) {
+                        targetIsDead = true;
+                    }
+                }
+                
+                if (targetIsDead) {
+                    entity->character.targetPlayerID = GetAlternativeTargetPlayerID(currentTargetID, entityIndex);
+                }
+
                 if (currentConnectionState.localPlayerIdentification == entity->character.targetPlayerID) {
                     targetPosition = currentConnectionState.localPosition;
                     targetFound = true;
@@ -501,6 +551,18 @@ void Weapon_FireFireballRing(Vector2 position, u32 ownerID) {
 // --- Player Implementation ---
 void Player_UpdateMovement(f32 deltaTime) {
     if (!Network_IsConnected(&currentConnectionState)) return;
+
+    // Check for predicted local respawn when health <= 0
+    if (currentConnectionState.health <= 0.0f) {
+        currentConnectionState.health = currentConnectionState.maxHealth;
+        currentConnectionState.localPosition = (Vector2){ 0, 0 };
+        currentConnectionState.iframeTimer = 2.0f; // 2 seconds spawn protection
+        currentConnectionState.damageFlashTimer = 2.0f; // 2 seconds spawn protection visual damage flash
+        
+        // Notify server of respawn position
+        Network_SendVelocity(&currentConnectionState, (Vector2){ 0, 0 });
+        printf("[DEATH] Player died! Predicted local respawn at spawn (0, 0)...\n");
+    }
 
     u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
     PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];

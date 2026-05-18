@@ -102,11 +102,24 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 PacketVelocityUpdate* velocityUpdate = (PacketVelocityUpdate*)receiveBuffer;
                 if (velocityUpdate->header.playerIdentification == connectionState->localPlayerIdentification) break;
 
-                // For remote players, we still use the identification as index for now 
-                // (Server should ensure they fit in MAX_REMOTE_ENTITIES)
                 u32 entityIndex = velocityUpdate->header.playerIdentification % MAX_REMOTE_ENTITIES;
-                connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
-                connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
+                
+                // Initialize if needed
+                if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_UNDEFINED) {
+                    connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
+                    connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
+                    connectionState->remoteEntities[entityIndex].character.position = velocityUpdate->position;
+                    connectionState->remoteEntities[entityIndex].character.targetPosition = velocityUpdate->position;
+                }
+                
+                // Snap if extremely far desynced (> 150.0f units)
+                f32 dist = Vector2Distance(connectionState->remoteEntities[entityIndex].character.position, velocityUpdate->position);
+                if (dist > 150.0f) {
+                    connectionState->remoteEntities[entityIndex].character.position = velocityUpdate->position;
+                }
+                
+                // Gently feed targetPosition and velocity for smooth interpolation
+                connectionState->remoteEntities[entityIndex].character.targetPosition = velocityUpdate->position;
                 connectionState->remoteEntities[entityIndex].character.velocity = velocityUpdate->velocity;
                 break;
             }
@@ -115,8 +128,11 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 for (u32 playerIndex = 0; playerIndex < worldState->count; playerIndex++) {
                     RemotePlayerState* remotePlayerState = &worldState->players[playerIndex];
                     if (remotePlayerState->identification == connectionState->localPlayerIdentification) {
-                        // Reconcile local position with server
-                        connectionState->localPosition = Vector2Lerp(connectionState->localPosition, remotePlayerState->position, 0.5f);
+                        // Reconcile local position with server only if desynced by more than 50.0f units (Reconciliation Dead-Zone)
+                        f32 dist = Vector2Distance(connectionState->localPosition, remotePlayerState->position);
+                        if (dist > 50.0f) {
+                            connectionState->localPosition = Vector2Lerp(connectionState->localPosition, remotePlayerState->position, 0.10f);
+                        }
                         // Authoritative health reconciliation
                         if (connectionState->health != remotePlayerState->health) {
                             connectionState->health = remotePlayerState->health;
@@ -125,11 +141,32 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     }
 
                     u32 entityIndex = remotePlayerState->identification % MAX_REMOTE_ENTITIES;
-                    connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
-                    connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
-                    connectionState->remoteEntities[entityIndex].character.velocity = remotePlayerState->velocity;
-                    connectionState->remoteEntities[entityIndex].character.position = remotePlayerState->position;
+                    
+                    // Initialize if needed
+                    if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_UNDEFINED) {
+                        connectionState->remoteEntities[entityIndex].entityType = ENTITY_CHARACTER;
+                        connectionState->remoteEntities[entityIndex].character.characterType = CHARACTER_PLAYER;
+                        connectionState->remoteEntities[entityIndex].character.position = remotePlayerState->position;
+                        connectionState->remoteEntities[entityIndex].character.targetPosition = remotePlayerState->position;
+                    }
+                    
+                    // Snap if extremely far desynced (> 150.0f units)
+                    f32 dist = Vector2Distance(connectionState->remoteEntities[entityIndex].character.position, remotePlayerState->position);
+                    if (dist > 150.0f) {
+                        connectionState->remoteEntities[entityIndex].character.position = remotePlayerState->position;
+                    }
+                    
+                    // Gently feed targetPosition and velocity for smooth interpolation
                     connectionState->remoteEntities[entityIndex].character.targetPosition = remotePlayerState->position;
+                    connectionState->remoteEntities[entityIndex].character.velocity = remotePlayerState->velocity;
+                    // Detect remote player respawn: if their health goes from <= 0 back to positive
+                    if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER &&
+                        connectionState->remoteEntities[entityIndex].character.characterType == CHARACTER_PLAYER &&
+                        connectionState->remoteEntities[entityIndex].character.health <= 0.0f &&
+                        remotePlayerState->health > 0.0f) {
+                        connectionState->remoteEntities[entityIndex].character.damageFlashTimer = 2.0f;
+                    }
+
                     connectionState->remoteEntities[entityIndex].character.weaponsMask = remotePlayerState->weaponsMask; 
                     connectionState->remoteEntities[entityIndex].character.health = remotePlayerState->health; 
                 }

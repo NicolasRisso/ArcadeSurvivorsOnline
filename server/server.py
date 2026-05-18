@@ -103,7 +103,7 @@ HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ffff"
 WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
-PLAYER_STATE_FORMAT = "IffffBf"
+PLAYER_STATE_FORMAT = "<IffffBf"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffffi"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
 SINGLE_SNAPSHOT_FORMAT = "ff"
@@ -187,8 +187,19 @@ class Server:
         
         # Move players based on their last reported velocity
         for player in self.players.values():
-            player["position_x"] += player["velocity_x"] * delta_time
-            player["position_y"] += player["velocity_y"] * delta_time
+            if player.get("health", 100.0) <= 0.0:
+                # Server Authoritative Respawn
+                max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
+                player["health"] = max_health
+                player["position_x"] = 0.0
+                player["position_y"] = 0.0
+                player["velocity_x"] = 0.0
+                player["velocity_y"] = 0.0
+                player["iframe_until"] = current_time + 2.0
+                print(f"[DEATH] Authoritative server respawned Player {player['identification']} at (0, 0)")
+            else:
+                player["position_x"] += player["velocity_x"] * delta_time
+                player["position_y"] += player["velocity_y"] * delta_time
 
         # Update enemies
         for index, entity in list(self.entities.items()):
@@ -222,6 +233,17 @@ class Server:
                         if p["identification"] == entity["targetPlayerID"]:
                             target_pos = (p["position_x"], p["position_y"])
                             target_found = True
+                            
+                            # If target player is dead, select alternative alive player deterministically
+                            if p.get("health", 100.0) <= 0.0:
+                                alive_players = [pl["identification"] for pl in self.players.values() if pl.get("health", 100.0) > 0.0]
+                                if alive_players:
+                                    entity["targetPlayerID"] = alive_players[index % len(alive_players)]
+                                    # Reset to new target player
+                                    for pl in self.players.values():
+                                        if pl["identification"] == entity["targetPlayerID"]:
+                                            target_pos = (pl["position_x"], pl["position_y"])
+                                            break
                             break
                     
                     # If the player is gone, clear the target to trigger re-targeting next tick
@@ -411,11 +433,22 @@ class Server:
             if address in self.players:
                 if len(data) >= struct.calcsize(VELOCITY_UPDATE_FORMAT):
                     _, _, _, posX, posY, velocityX, velocityY = struct.unpack(VELOCITY_UPDATE_FORMAT, data[:struct.calcsize(VELOCITY_UPDATE_FORMAT)])
-                    self.players[address]["position_x"] = posX
-                    self.players[address]["position_y"] = posY
-                    self.players[address]["velocity_x"] = velocityX
-                    self.players[address]["velocity_y"] = velocityY
-                    self.players[address]["lastHeartbeatReceived"] = time.time()
+                    
+                    player = self.players[address]
+                    # Verify player movement: check distance between client position and server prediction
+                    dx = posX - player["position_x"]
+                    dy = posY - player["position_y"]
+                    dist = math.sqrt(dx*dx + dy*dy)
+                    
+                    # Accept position update only if distance is within standard limits
+                    # (Allow initial spawn to bypass check when server position is 0.0)
+                    if dist <= 100.0 or (player["position_x"] == 0.0 and player["position_y"] == 0.0):
+                        player["position_x"] = posX
+                        player["position_y"] = posY
+                    
+                    player["velocity_x"] = velocityX
+                    player["velocity_y"] = velocityY
+                    player["lastHeartbeatReceived"] = time.time()
 
         elif packetType == PACKET_ENEMY_DEATH_REPORT:
             if address in self.players:
@@ -444,7 +477,46 @@ class Server:
                         start = header_size + (i * entry_size)
                         if start + entry_size > len(data): break
                         eIndex, damage = struct.unpack("<" + DAMAGE_ENTRY_FORMAT, data[start:start+entry_size])
-                        if eIndex in self.entities:
+                        
+                        # Check if eIndex belongs to a player
+                        target_player = None
+                        for p in self.players.values():
+                            if p["identification"] == eIndex:
+                                target_player = p
+                                break
+                                
+                        if target_player:
+                            current_time = time.time()
+                            if current_time >= target_player.get("iframe_until", 0.0):
+                                # Verify if any active enemy is close to the player to validate collision
+                                px, py = target_player["position_x"], target_player["position_y"]
+                                enemy_found = False
+                                for ent in self.entities.values():
+                                    if ent["type"] == ENTITY_CHARACTER and ent["charType"] == CHARACTER_ENEMY:
+                                        dx = px - ent["position_x"]
+                                        dy = py - ent["position_y"]
+                                        dist = math.sqrt(dx*dx + dy*dy)
+                                        if dist <= 120.0: # generous threshold to account for network latency/interpolation
+                                            enemy_found = True
+                                            break
+                                            
+                                if enemy_found:
+                                    target_player["health"] -= damage
+                                    target_player["iframe_until"] = current_time + 0.5
+                                    if target_player["health"] <= 0.0:
+                                        max_health = target_player.get("attributes", [100.0])[0] if target_player.get("attributes") else 100.0
+                                        target_player["health"] = max_health
+                                        target_player["position_x"] = 0.0
+                                        target_player["position_y"] = 0.0
+                                        target_player["velocity_x"] = 0.0
+                                        target_player["velocity_y"] = 0.0
+                                        target_player["iframe_until"] = current_time + 2.0
+                                        print(f"[DEATH] Authoritative server respawned Player {eIndex} instantly at (0, 0)")
+                                    else:
+                                        # Broadcast damage to other players so they display the damage visual effect!
+                                        self.broadcast_damage(eIndex, damage, 0)
+                        
+                        elif eIndex in self.entities:
                             entity = self.entities[eIndex]
                             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                                 entity["health"] -= damage
@@ -521,8 +593,18 @@ class Server:
                             if enemy_found:
                                 player["health"] -= damage
                                 player["iframe_until"] = current_time + 0.5
-                                # Broadcast to other players so they display the damage visual effect on this player!
-                                self.broadcast_damage(playerIdentification, damage, 0)
+                                if player["health"] <= 0.0:
+                                    max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
+                                    player["health"] = max_health
+                                    player["position_x"] = 0.0
+                                    player["position_y"] = 0.0
+                                    player["velocity_x"] = 0.0
+                                    player["velocity_y"] = 0.0
+                                    player["iframe_until"] = current_time + 2.0
+                                    print(f"[DEATH] Authoritative server respawned Player {playerIdentification} instantly at (0, 0)")
+                                else:
+                                    # Broadcast to other players so they display the damage visual effect on this player!
+                                    self.broadcast_damage(playerIdentification, damage, 0)
                     
                     # 2. Enemy taking damage
                     elif eIndex in self.entities:
