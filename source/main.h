@@ -69,7 +69,8 @@ typedef enum EntityType : u8 {
     ENTITY_UNDEFINED = 0,
     ENTITY_CHARACTER = 1,
     ENTITY_PROJECTILE = 2,
-    ENTITY_XP_CRYSTAL = 3
+    ENTITY_XP_CRYSTAL = 3,
+    ENTITY_DAMAGE_POPUP = 4
 } EntityType;
 
 typedef enum ProjectileType : u8 {
@@ -159,6 +160,13 @@ typedef struct VisualEffect {
     bool active;
 } VisualEffect;
 
+typedef struct DamagePopup {
+    Vector2 position;
+    f32 damageValue;
+    f32 lifetime;
+    Color color;
+} DamagePopup;
+
 typedef struct WeaponStats {
     f32 damage;
     f32 attackSpeed;
@@ -201,6 +209,7 @@ typedef struct Entity{
         Character character; 
         Projectile proj;
         XPCrystal xpCrystal;
+        DamagePopup damagePopup;
     };
 } Entity;
 
@@ -244,4 +253,5 @@ void Input_Update(InputState* state);
 //~ Begin of Renderer
 void Render_Entity(const Entity* entity);
 void Render_Map(void);
+void SpawnDamagePopup(Vector2 position, f32 damage, Color color);
 //~ End of Renderer

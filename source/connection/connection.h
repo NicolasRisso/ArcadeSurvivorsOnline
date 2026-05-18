@@ -174,6 +174,7 @@ typedef struct ConnectionState {
     u32 pendingDamageCount;
     
     VisualEffect localVisualEffects[128];
+    Entity localDamagePopups[256];
 } ConnectionState;
 
 bool Network_InitConnection(ConnectionState* state);

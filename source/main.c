@@ -165,6 +165,43 @@ int main(void) {
                     }
                 }
 
+                // Update and Render Local Damage Popups
+                for (int i = 0; i < 256; i++) {
+                    Entity* popupEnt = &currentConnectionState.localDamagePopups[i];
+                    if (popupEnt->entityType == ENTITY_DAMAGE_POPUP) {
+                        DamagePopup* popup = &popupEnt->damagePopup;
+                        popup->lifetime += frameDelta;
+                        if (popup->lifetime >= 0.7f) {
+                            popupEnt->entityType = ENTITY_UNDEFINED;
+                        } else {
+                            popup->position.y -= frameDelta * 40.0f;
+                            
+                            f32 t = popup->lifetime;
+                            f32 scale = 1.0f;
+                            f32 alpha = 1.0f;
+                            if (t <= 0.2f) {
+                                scale = 1.0f + (t / 0.2f) * 0.2f;
+                                alpha = 1.0f;
+                            } else {
+                                scale = 1.2f * (1.0f - (t - 0.2f) / 0.5f);
+                                alpha = 1.0f - (t - 0.2f) / 0.5f;
+                            }
+                            
+                            if (scale < 0.0f) scale = 0.0f;
+                            if (alpha < 0.0f) alpha = 0.0f;
+                            if (alpha > 1.0f) alpha = 1.0f;
+                            
+                            int baseFontSize = 18;
+                            int currentFontSize = (int)(baseFontSize * scale);
+                            if (currentFontSize > 0) {
+                                const char* dmgText = TextFormat("%.0f", popup->damageValue);
+                                int textWidth = MeasureText(dmgText, currentFontSize);
+                                DrawText(dmgText, (int)(popup->position.x - textWidth / 2), (int)(popup->position.y - currentFontSize / 2), currentFontSize, Fade(popup->color, alpha));
+                            }
+                        }
+                    }
+                }
+
                 for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
                     const Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
                     if (entity->entityType == ENTITY_CHARACTER) {
@@ -398,6 +435,7 @@ void Weapons_Update(f32 deltaTime) {
                             ApplyLifesteal(&currentConnectionState, enemyIndex, dmg, true);
                             Network_SendDamage(&currentConnectionState, enemyIndex, dmg);
                             enemy->character.health -= dmg; // Local Prediction
+                            SpawnDamagePopup(enemy->character.position, dmg, YELLOW);
                             hitCount++;
                             if (hitCount >= 100) break;
                         }
@@ -452,7 +490,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                                 Entity* other = &currentConnectionState.remoteEntities[otherIndex];
                                 if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
                                     if (CheckCollisionCircles(proj->position, explosionRadius, other->character.position, PLAYER_RADIUS)) {
-                                        if (isLocalOwner) ApplyLifesteal(&currentConnectionState, otherIndex, explosionDamage, true);
+                                        if (isLocalOwner) {
+                                            ApplyLifesteal(&currentConnectionState, otherIndex, explosionDamage, true);
+                                            SpawnDamagePopup(other->character.position, explosionDamage, YELLOW);
+                                        }
                                         Network_SendDamage(&currentConnectionState, otherIndex, explosionDamage); // DAMAGE_FIREBALL
                                         other->character.health -= explosionDamage; // Local Prediction
                                     }
@@ -477,7 +518,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                             }
                             if (!alreadyHit) {
                                 f32 crystalDamage = 100.0f * ownerAttr->damage;
-                                if (isLocalOwner) ApplyLifesteal(&currentConnectionState, enemyIndex, crystalDamage, false);
+                                if (isLocalOwner) {
+                                    ApplyLifesteal(&currentConnectionState, enemyIndex, crystalDamage, false);
+                                    SpawnDamagePopup(remoteEntity->character.position, crystalDamage, YELLOW);
+                                }
                                 Network_SendDamage(&currentConnectionState, enemyIndex, crystalDamage); // DAMAGE_CRYSTAL
                                 remoteEntity->character.health -= crystalDamage; // Local Prediction
                                 if (proj->hitCount < 8) proj->hitEnemies[proj->hitCount++] = enemyIndex;
@@ -505,7 +549,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                         Entity* other = &currentConnectionState.remoteEntities[otherIndex];
                         if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
                             if (CheckCollisionCircles(proj->position, bombRadius, other->character.position, PLAYER_RADIUS)) {
-                                if (isLocalOwner) ApplyLifesteal(&currentConnectionState, otherIndex, bombDamage, true);
+                                if (isLocalOwner) {
+                                    ApplyLifesteal(&currentConnectionState, otherIndex, bombDamage, true);
+                                    SpawnDamagePopup(other->character.position, bombDamage, YELLOW);
+                                }
                                 Network_SendDamage(&currentConnectionState, otherIndex, bombDamage); // DAMAGE_BOMB
                                 other->character.health -= bombDamage; // Local Prediction
                             }
@@ -524,7 +571,10 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                         Entity* other = &currentConnectionState.remoteEntities[otherIndex];
                         if (other->entityType == ENTITY_CHARACTER && other->character.characterType == CHARACTER_ENEMY) {
                             if (CheckCollisionCircles(proj->position, spikeRadius, other->character.position, PLAYER_RADIUS)) {
-                                if (isLocalOwner) ApplyLifesteal(&currentConnectionState, otherIndex, spikeDamage, true);
+                                if (isLocalOwner) {
+                                    ApplyLifesteal(&currentConnectionState, otherIndex, spikeDamage, true);
+                                    SpawnDamagePopup(other->character.position, spikeDamage, YELLOW);
+                                }
                                 Network_SendDamage(&currentConnectionState, otherIndex, spikeDamage); // DAMAGE_SPIKE
                                 other->character.health -= spikeDamage; // Local Prediction
                                 proj->damageAccumulated += spikeDamage;
@@ -546,6 +596,22 @@ void Projectile_UpdateMovement(f32 deltaTime) {
 
 void Weapon_FireFireballRing(Vector2 position, u32 ownerID) {
     // Deprecated: Now handled by server via Network_SendWeaponFire
+}
+
+void SpawnDamagePopup(Vector2 position, f32 damage, Color color) {
+    for (int i = 0; i < 256; i++) {
+        if (currentConnectionState.localDamagePopups[i].entityType == ENTITY_UNDEFINED) {
+            f32 offsetX = (f32)(rand() % 31 - 15);
+            f32 offsetY = (f32)(rand() % 31 - 15);
+            
+            currentConnectionState.localDamagePopups[i].entityType = ENTITY_DAMAGE_POPUP;
+            currentConnectionState.localDamagePopups[i].damagePopup.position = (Vector2){ position.x + offsetX, position.y + offsetY };
+            currentConnectionState.localDamagePopups[i].damagePopup.damageValue = damage;
+            currentConnectionState.localDamagePopups[i].damagePopup.lifetime = 0.0f;
+            currentConnectionState.localDamagePopups[i].damagePopup.color = color;
+            break;
+        }
+    }
 }
 
 // --- Player Implementation ---

@@ -62,6 +62,14 @@ bool Network_InitConnection(ConnectionState* connectionState) {
         connectionState->remoteEntities[entityIndex].entityType = ENTITY_UNDEFINED;
     }
 
+    for (int i = 0; i < 128; i++) {
+        connectionState->localVisualEffects[i].active = false;
+    }
+
+    for (int i = 0; i < 256; i++) {
+        connectionState->localDamagePopups[i].entityType = ENTITY_UNDEFINED;
+    }
+
     // Send identification request
     PacketIDRequest identificationRequest;
     identificationRequest.header.type = PACKET_ID_REQUEST;
@@ -253,6 +261,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                             // Prediction: Ignore damage from ourselves (already applied)
                             if (damagePacket->header.playerIdentification != connectionState->localPlayerIdentification) {
                                 connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
+                                SpawnDamagePopup(connectionState->remoteEntities[entityIndex].character.position, damagePacket->damage, ORANGE);
                             }
                             connectionState->remoteEntities[entityIndex].character.damageFlashTimer = 0.15f;
                         }
