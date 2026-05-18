@@ -792,19 +792,38 @@ void Render_Entity(const Entity* entity) {
                     }
                 }
             } else if (entity->character.characterType == CHARACTER_ENEMY) {
-                DrawCircleV(entity->character.position, PLAYER_RADIUS, PURPLE);
+                f32 radius = PLAYER_RADIUS;
+                Color baseColor = PURPLE;
+                const char* labelText = "ENEMY";
+                int barWidth = 40;
+                
+                if (entity->character.enemyClass == ENEMY_CLASS_FAST) {
+                    radius = PLAYER_RADIUS * 0.75f;
+                    baseColor = ORANGE;
+                    labelText = "FAST";
+                    barWidth = 30;
+                } else if (entity->character.enemyClass == ENEMY_CLASS_TANK) {
+                    radius = PLAYER_RADIUS * 1.5f;
+                    baseColor = DARKPURPLE;
+                    labelText = "TANK";
+                    barWidth = 60;
+                }
+                
+                DrawCircleV(entity->character.position, radius, baseColor);
                 // Draw HP Bar
                 f32 hpPercent = entity->character.health / entity->character.maxHealth;
-                DrawRectangle(entity->character.position.x - 20, entity->character.position.y - 30, 40, 5, DARKGRAY);
-                DrawRectangle(entity->character.position.x - 20, entity->character.position.y - 30, (int)(40 * hpPercent), 5, GREEN);
-                DrawText("ENEMY", entity->character.position.x - 20, entity->character.position.y - 45, 10, PURPLE);
+                if (hpPercent < 0.0f) hpPercent = 0.0f;
+                if (hpPercent > 1.0f) hpPercent = 1.0f;
+                DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, barWidth, 5, DARKGRAY);
+                DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, (int)(barWidth * hpPercent), 5, GREEN);
+                DrawText(labelText, entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 25, 10, baseColor);
                 
                 // Draw enemy smooth ease-in/ease-out damage flash if timer is active
                 if (entity->character.damageFlashTimer > 0) {
                     f32 t = entity->character.damageFlashTimer / 0.15f;
                     f32 flashAlpha = sinf(t * 3.14159265f);
                     if (flashAlpha > 0.0f) {
-                        DrawCircleV(entity->character.position, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                        DrawCircleV(entity->character.position, radius, Fade(WHITE, flashAlpha));
                     }
                 }
             }

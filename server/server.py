@@ -70,6 +70,11 @@ CHARACTER_UNDEFINED = 0
 CHARACTER_PLAYER = 1
 CHARACTER_ENEMY = 2
 
+# Enemy Classes
+ENEMY_CLASS_NORMAL = 0
+ENEMY_CLASS_FAST = 1
+ENEMY_CLASS_TANK = 2
+
 # Entity Types
 ENTITY_UNDEFINED = 0
 ENTITY_CHARACTER = 1
@@ -90,12 +95,21 @@ ENEMY_AVOIDANCE_FORCE = 0.5
 
 # Spawner Config
 SPAWN_INTERVAL = 1.75
-# Shapes: (weight, min_count, max_count, min_dist, max_dist)
+# Shapes: (weight, min_count, max_count, min_dist, max_dist, enemy_class)
 SPAWN_CONFIG = {
-    "SINGLE": (25, 1, 1, 400, 600),
-    "CIRCLE": (5, 8, 14, 700, 900),
-    "WALL": (3, 6, 12, 800, 1000),
-    "CLUSTER": (7, 5, 10, 500, 800)
+    "SINGLE": (20, 1, 1, 400, 600, ENEMY_CLASS_NORMAL),
+    "CIRCLE": (5, 8, 14, 700, 900, ENEMY_CLASS_NORMAL),
+    "WALL": (3, 6, 12, 800, 1000, ENEMY_CLASS_NORMAL),
+    "CLUSTER": (6, 5, 10, 500, 800, ENEMY_CLASS_NORMAL),
+    
+    # Fast groups
+    "SINGLE_FAST": (15, 1, 3, 400, 600, ENEMY_CLASS_FAST),
+    "CIRCLE_FAST": (3, 6, 10, 700, 900, ENEMY_CLASS_FAST),
+    "CLUSTER_FAST": (5, 4, 8, 500, 800, ENEMY_CLASS_FAST),
+    
+    # Tank groups
+    "SINGLE_TANK": (10, 1, 1, 400, 600, ENEMY_CLASS_TANK),
+    "CLUSTER_TANK": (3, 2, 4, 500, 800, ENEMY_CLASS_TANK),
 }
 
 # Struct Formats (Little Endian, Packed)
@@ -273,7 +287,7 @@ class Server:
                         else:
                             final_x, final_y = 0, 0
                         
-                        speed = 150.0
+                        speed = entity.get("speed", 150.0)
                         entity["position_x"] += final_x * speed * delta_time
                         entity["position_y"] += final_y * speed * delta_time
 
@@ -329,22 +343,27 @@ class Server:
         px, py = target_player["position_x"], target_player["position_y"]
         
         # 3. Determine count and base distance from config
-        _, min_c, max_c, min_d, max_d = SPAWN_CONFIG[shape]
+        _, min_c, max_c, min_d, max_d, enemy_class = SPAWN_CONFIG[shape]
         count = random.randint(min_c, max_c)
         distance = random.uniform(min_d, max_d)
         
         positions = []
         
-        if shape == "SINGLE":
+        base_shape = "SINGLE"
+        if "CIRCLE" in shape: base_shape = "CIRCLE"
+        elif "WALL" in shape: base_shape = "WALL"
+        elif "CLUSTER" in shape: base_shape = "CLUSTER"
+        
+        if base_shape == "SINGLE":
             positions.append(self.get_random_spawn_position(px, py, distance))
             
-        elif shape == "CIRCLE":
+        elif base_shape == "CIRCLE":
             start_angle = random.uniform(0, 2 * math.pi)
             for i in range(count):
                 angle = start_angle + (2 * math.pi * i / count)
                 positions.append((px + distance * math.cos(angle), py + distance * math.sin(angle)))
                 
-        elif shape == "WALL":
+        elif base_shape == "WALL":
             angle = random.uniform(0, 2 * math.pi)
             center_x = px + distance * math.cos(angle)
             center_y = py + distance * math.sin(angle)
@@ -358,13 +377,27 @@ class Server:
                 offset = (i - count/2) * spacing
                 positions.append((center_x + tx * offset, center_y + ty * offset))
                 
-        elif shape == "CLUSTER":
+        elif base_shape == "CLUSTER":
             # Center of the cluster
             cx, cy = self.get_random_spawn_position(px, py, distance)
             for _ in range(count):
                 ox = random.uniform(-50, 50)
                 oy = random.uniform(-50, 50)
                 positions.append((cx + ox, cy + oy))
+        
+        # Determine stats based on enemy class
+        hp = ENEMY_HEALTH
+        speed = 150.0
+        xp_value = 20.0
+        
+        if enemy_class == ENEMY_CLASS_FAST:
+            hp = ENEMY_HEALTH * 0.6
+            speed = 225.0
+            xp_value = 40.0
+        elif enemy_class == ENEMY_CLASS_TANK:
+            hp = ENEMY_HEALTH * 3.0
+            speed = 90.0
+            xp_value = 100.0
         
         # 4. Spawn the entities
         for rx, ry in positions:
@@ -380,8 +413,11 @@ class Server:
                 "position_y": ry,
                 "spawnTime": time.time(),
                 "targetPlayerID": target_player["identification"],
-                "health": ENEMY_HEALTH,
-                "max_health": ENEMY_HEALTH
+                "health": hp,
+                "max_health": hp,
+                "enemyClass": enemy_class,
+                "speed": speed,
+                "xp_value": xp_value
             }
             self.broadcast_spawn(eIndex)
             
@@ -462,10 +498,11 @@ class Server:
                         if eIndex in self.entities:
                             # Verify it's an enemy (security)
                             if self.entities[eIndex]["charType"] == CHARACTER_ENEMY:
+                                xp_val = self.entities[eIndex].get("xp_value", 20.0)
                                 ex, ey = self.entities[eIndex]["position_x"], self.entities[eIndex]["position_y"]
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
-                                self.spawn_xp_crystal(ex, ey)
+                                self.spawn_xp_crystal(ex, ey, xp_val)
 
         elif packetType == PACKET_DAMAGE_BATCH:
             if address in self.players:
@@ -521,10 +558,11 @@ class Server:
                             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                                 entity["health"] -= damage
                                 if entity["health"] <= 0:
+                                    xp_val = entity.get("xp_value", 20.0)
                                     ex, ey = entity["position_x"], entity["position_y"]
                                     del self.entities[eIndex]
                                     self.broadcast_despawn(eIndex)
-                                    self.spawn_xp_crystal(ex, ey)
+                                    self.spawn_xp_crystal(ex, ey, xp_val)
                                 else:
                                     self.broadcast_damage(eIndex, damage, playerIdentification)
 
@@ -628,11 +666,12 @@ class Server:
                         if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
                             entity["health"] -= damage
                             if entity["health"] <= 0:
+                                xp_val = entity.get("xp_value", 20.0)
                                 ex, ey = entity["position_x"], entity["position_y"]
                                 self.log(f"Enemy {eIndex} killed by player {playerIdentification}")
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
-                                self.spawn_xp_crystal(ex, ey)
+                                self.spawn_xp_crystal(ex, ey, xp_val)
                             else:
                                 self.broadcast_damage(eIndex, damage, playerIdentification)
 
@@ -726,13 +765,17 @@ class Server:
 
     def get_spawn_packet(self, entityIndex):
         entity = self.entities[entityIndex]
+        extra_param = entity.get("extraParam", 0)
+        if entity["type"] == ENTITY_CHARACTER and entity.get("charType", 0) == CHARACTER_ENEMY:
+            extra_param = entity.get("enemyClass", 0)
+            
         return struct.pack(ENTITY_SPAWN_FORMAT, PACKET_ENTITY_SPAWN, 0, time.time(), 
                             entityIndex, entity["type"], entity.get("charType", 0), 
                             entity["position_x"], entity["position_y"],
                             entity.get("targetPlayerID", 0) if entity["type"] == ENTITY_CHARACTER else entity.get("ownerID", 0),
                             entity.get("velocity_x", 0), entity.get("velocity_y", 0),
                             entity.get("health", 0.0), entity.get("max_health", 0.0),
-                            entity.get("extraParam", 0))
+                            extra_param)
 
     def broadcast_spawn(self, entityIndex):
         packet = self.get_spawn_packet(entityIndex)
@@ -749,7 +792,7 @@ class Server:
         for address in self.players:
             self.serverSocket.sendto(packet, address)
 
-    def spawn_xp_crystal(self, x, y):
+    def spawn_xp_crystal(self, x, y, value=20.0):
         # 1. Try to find a free slot in the XP range
         free_index = -1
         nearest_index = -1
@@ -767,7 +810,7 @@ class Server:
         
         # 2. Merging logic: if pool full or extremely close (40 units)
         if (free_index == -1 and nearest_index != -1) or (nearest_index != -1 and min_dist < 40**2):
-            self.entities[nearest_index]["health"] += 20.0
+            self.entities[nearest_index]["health"] += value
             # Broadcast a spawn update to let clients know the value changed (health field)
             self.broadcast_spawn(nearest_index)
             return
@@ -779,7 +822,7 @@ class Server:
                 "charType": 0,
                 "position_x": x,
                 "position_y": y,
-                "health": 20.0, # Using health field for XP amount
+                "health": value, # Using health field for XP amount
                 "spawnTime": time.time()
             }
             self.broadcast_spawn(free_index)

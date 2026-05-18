@@ -97,6 +97,12 @@ typedef enum CharacterType : u8 {
     CHARACTER_ENEMY = 2
 } CharacterType;
 
+typedef enum EnemyClass : u8 {
+    ENEMY_CLASS_NORMAL = 0,
+    ENEMY_CLASS_FAST = 1,
+    ENEMY_CLASS_TANK = 2
+} EnemyClass;
+
 typedef enum RelicType : u8 {
     RELIC_UNDEFINED = 0,
     RELIC_HEALTH = 1,
@@ -128,6 +134,7 @@ typedef struct Character{
     f32 maxHealth;
     u8 weaponsMask;
     f32 damageFlashTimer;
+    EnemyClass enemyClass;
 } Character;
 
 typedef struct Projectile {

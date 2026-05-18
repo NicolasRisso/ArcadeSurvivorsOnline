@@ -193,7 +193,12 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                     connectionState->remoteEntities[entityIndex].character.targetPlayerID = spawn->targetPlayerID;
                     connectionState->remoteEntities[entityIndex].character.health = spawn->health;
                     connectionState->remoteEntities[entityIndex].character.maxHealth = spawn->maxHealth;
-                    printf("SPAWN: Character %u (Type %d) HP: %.1f/%.1f\n", entityIndex, spawn->characterType, spawn->health, spawn->maxHealth);
+                    if (spawn->characterType == CHARACTER_ENEMY) {
+                        connectionState->remoteEntities[entityIndex].character.enemyClass = (EnemyClass)spawn->extraParam;
+                    } else {
+                        connectionState->remoteEntities[entityIndex].character.enemyClass = ENEMY_CLASS_NORMAL;
+                    }
+                    printf("SPAWN: Character %u (Type %d, Class %d) HP: %.1f/%.1f\n", entityIndex, spawn->characterType, spawn->extraParam, spawn->health, spawn->maxHealth);
                 } else if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_PROJECTILE) {
                     connectionState->remoteEntities[entityIndex].proj.type = (ProjectileType)spawn->characterType;
                     connectionState->remoteEntities[entityIndex].proj.position = spawn->position;
