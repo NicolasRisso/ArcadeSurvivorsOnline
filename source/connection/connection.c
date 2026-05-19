@@ -46,6 +46,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
     connectionState->damageFlashTimer = 0.0f;
     connectionState->iframeTimer = 0.0f;
     connectionState->gameTime = 0.0f;
+    connectionState->teamLives = 3;
 
     for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
         connectionState->playerAttributes[i] = (PlayerAttributes){
@@ -152,6 +153,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             case PACKET_WORLD_STATE: {
                 PacketWorldState* worldState = (PacketWorldState*)receiveBuffer;
                 connectionState->gameTime = worldState->gameTime;
+                connectionState->teamLives = worldState->teamLives;
                 for (u32 playerIndex = 0; playerIndex < worldState->count; playerIndex++) {
                     RemotePlayerState* remotePlayerState = &worldState->players[playerIndex];
                     if (remotePlayerState->identification == connectionState->localPlayerIdentification) {

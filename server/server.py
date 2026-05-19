@@ -119,7 +119,7 @@ SPAWN_CONFIG = {
 HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ffff"
-WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "fI"
+WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "fiI"
 PLAYER_STATE_FORMAT = "<IffffBf"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffffi"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
@@ -157,12 +157,34 @@ class Server:
         self.last_boss_warning_cycle = -1
         self.last_boss_spawn_cycle = -1
         self.is_swarm_active = False
+        self.team_lives = 3
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
     def log(self, message):
         self.log_buffer.append(f"[{time.strftime('%H:%M:%S')}] {message}")
         if len(self.log_buffer) > 1000: # Safety flush
             self.flush_logs()
+
+    def handle_player_death(self, player):
+        current_time = time.time()
+        player_id = player["identification"]
+        if self.team_lives > 0:
+            self.team_lives -= 1
+            self.broadcast_notification(f"Player {player_id} Died! {self.team_lives} Lives Left", 255, 0, 0, 5.0, 1.0, False)
+            max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
+            player["health"] = max_health
+            player["position_x"] = 0.0
+            player["position_y"] = 0.0
+            player["velocity_x"] = 0.0
+            player["velocity_y"] = 0.0
+            player["iframe_until"] = current_time + 2.0
+            print(f"[DEATH] Authoritative server respawned Player {player_id} at (0, 0). Lives left: {self.team_lives}")
+        else:
+            player["health"] = 0.0
+            player["velocity_x"] = 0.0
+            player["velocity_y"] = 0.0
+            self.broadcast_notification(f"Player {player_id} Died! Out of Lives", 255, 0, 0, 5.0, 1.0, False)
+            print(f"[DEATH] Player {player_id} died and cannot respawn (0 lives left).")
 
     def flush_logs(self):
         if self.log_buffer:
@@ -214,16 +236,12 @@ class Server:
         # Move players based on their last reported velocity
         for player in self.players.values():
             if player.get("health", 100.0) <= 0.0:
-                # Server Authoritative Respawn
-                self.broadcast_notification(f"Player {player['identification']} Died", 255, 0, 0, 5.0, 1.0, False)
-                max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
-                player["health"] = max_health
-                player["position_x"] = 0.0
-                player["position_y"] = 0.0
-                player["velocity_x"] = 0.0
-                player["velocity_y"] = 0.0
-                player["iframe_until"] = current_time + 2.0
-                print(f"[DEATH] Authoritative server respawned Player {player['identification']} at (0, 0)")
+                if self.team_lives > 0:
+                    self.handle_player_death(player)
+                else:
+                    player["health"] = 0.0
+                    player["velocity_x"] = 0.0
+                    player["velocity_y"] = 0.0
             else:
                 player["position_x"] += player["velocity_x"] * delta_time
                 player["position_y"] += player["velocity_y"] * delta_time
@@ -519,6 +537,11 @@ class Server:
                     _, _, _, posX, posY, velocityX, velocityY = struct.unpack(VELOCITY_UPDATE_FORMAT, data[:struct.calcsize(VELOCITY_UPDATE_FORMAT)])
                     
                     player = self.players[address]
+                    if player.get("health", 100.0) <= 0.0:
+                        player["velocity_x"] = 0.0
+                        player["velocity_y"] = 0.0
+                        return
+                    
                     # Verify player movement: check distance between client position and server prediction
                     dx = posX - player["position_x"]
                     dy = posY - player["position_y"]
@@ -595,15 +618,7 @@ class Server:
                                     target_player["health"] -= expected_damage
                                     target_player["iframe_until"] = current_time + 0.5
                                     if target_player["health"] <= 0.0:
-                                        self.broadcast_notification(f"Player {eIndex} Died", 255, 0, 0, 5.0, 1.0, False)
-                                        max_health = target_player.get("attributes", [100.0])[0] if target_player.get("attributes") else 100.0
-                                        target_player["health"] = max_health
-                                        target_player["position_x"] = 0.0
-                                        target_player["position_y"] = 0.0
-                                        target_player["velocity_x"] = 0.0
-                                        target_player["velocity_y"] = 0.0
-                                        target_player["iframe_until"] = current_time + 2.0
-                                        print(f"[DEATH] Authoritative server respawned Player {eIndex} instantly at (0, 0)")
+                                        self.handle_player_death(target_player)
                                     else:
                                         # Broadcast damage to other players so they display the damage visual effect!
                                         self.broadcast_damage(eIndex, expected_damage, 0)
@@ -703,15 +718,7 @@ class Server:
                                 player["health"] -= damage
                                 player["iframe_until"] = current_time + 0.5
                                 if player["health"] <= 0.0:
-                                    self.broadcast_notification(f"Player {playerIdentification} Died", 255, 0, 0, 5.0, 1.0, False)
-                                    max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
-                                    player["health"] = max_health
-                                    player["position_x"] = 0.0
-                                    player["position_y"] = 0.0
-                                    player["velocity_x"] = 0.0
-                                    player["velocity_y"] = 0.0
-                                    player["iframe_until"] = current_time + 2.0
-                                    print(f"[DEATH] Authoritative server respawned Player {playerIdentification} instantly at (0, 0)")
+                                    self.handle_player_death(player)
                                 else:
                                     # Broadcast to other players so they display the damage visual effect on this player!
                                     self.broadcast_damage(playerIdentification, damage, 0)
@@ -1041,7 +1048,7 @@ class Server:
         if self.start_time is not None:
             elapsed = currentTime - self.start_time
             
-        worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, elapsed, playerCount)
+        worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, elapsed, self.team_lives, playerCount)
         for player in playerList:
             worldStateData += struct.pack(PLAYER_STATE_FORMAT, 
                                           player["identification"], 

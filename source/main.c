@@ -11,6 +11,77 @@ f32 xpToNextLevel = 100.0f;
 u16 playerLevel = 1;
 f32 gameTime = 0.0f;
 
+u32 spectatedPlayerID = 0;
+
+u32 FindNextAlivePlayer(u32 currentSpectatedID, bool forward) {
+    for (int step = 1; step <= 4; step++) {
+        int nextID = currentSpectatedID + (forward ? step : -step);
+        while (nextID < 1) nextID += 4;
+        while (nextID > 4) nextID -= 4;
+
+        if (nextID == currentConnectionState.localPlayerIdentification) {
+            if (currentConnectionState.health > 0.0f) {
+                return nextID;
+            }
+        } else {
+            Entity* ent = &currentConnectionState.remoteEntities[nextID];
+            if (ent->entityType == ENTITY_CHARACTER &&
+                ent->character.characterType == CHARACTER_PLAYER &&
+                ent->character.health > 0.0f) {
+                return nextID;
+            }
+        }
+    }
+    return currentSpectatedID;
+}
+
+void DrawHeart(Vector2 center, float size, Color color) {
+    // Draw black border first
+    float border = size * 0.15f;
+    float outerSize = size + border;
+    
+    Vector2 ov1 = { center.x - outerSize, center.y - outerSize * 0.1f };
+    Vector2 ov2 = { center.x + outerSize, center.y - outerSize * 0.1f };
+    Vector2 ov3 = { center.x, center.y + outerSize };
+    DrawTriangle(ov1, ov3, ov2, BLACK);
+    DrawCircleV((Vector2){ center.x - outerSize * 0.5f, center.y - outerSize * 0.1f }, outerSize * 0.5f, BLACK);
+    DrawCircleV((Vector2){ center.x + outerSize * 0.5f, center.y - outerSize * 0.1f }, outerSize * 0.5f, BLACK);
+    
+    // Draw main heart
+    Vector2 v1 = { center.x - size, center.y - size * 0.1f };
+    Vector2 v2 = { center.x + size, center.y - size * 0.1f };
+    Vector2 v3 = { center.x, center.y + size };
+    DrawTriangle(v1, v3, v2, color);
+    DrawCircleV((Vector2){ center.x - size * 0.5f, center.y - size * 0.1f }, size * 0.5f, color);
+    DrawCircleV((Vector2){ center.x + size * 0.5f, center.y - size * 0.1f }, size * 0.5f, color);
+}
+
+void DrawTombstone(Vector2 pos, const char* name, Color nameColor) {
+    float width = 30.0f;
+    float height = 40.0f;
+    
+    // Draw base slab
+    DrawRectangle(pos.x - width/2.0f, pos.y - height/2.0f + 5.0f, width, height - 5.0f, GRAY);
+    
+    // Draw rounded top
+    DrawCircleV((Vector2){ pos.x, pos.y - height/2.0f + 5.0f }, width/2.0f, GRAY);
+    
+    // Draw outlines
+    DrawRectangleLines(pos.x - width/2.0f, pos.y - height/2.0f + 5.0f, width, height - 5.0f, DARKGRAY);
+    DrawCircleLines((int)pos.x, (int)(pos.y - height/2.0f + 5.0f), width/2.0f, DARKGRAY);
+    
+    // Draw the "RIP" cross on tombstone
+    DrawRectangle(pos.x - 2, pos.y - 12, 4, 16, BLACK);
+    DrawRectangle(pos.x - 6, pos.y - 8, 12, 4, BLACK);
+    
+    // Draw labels
+    DrawText("R.I.P.", pos.x - 12, pos.y + 10, 8, BLACK);
+    
+    // Draw player name above tombstone
+    DrawText(name, pos.x - MeasureText(name, 10)/2, pos.y - height/2.0f - 18, 10, nameColor);
+    DrawText("DEAD", pos.x - MeasureText("DEAD", 10)/2, pos.y - height/2.0f - 8, 10, RED);
+}
+
 void DrawXPBar(void);
 
 // --- Level Up / Weapon System State ---
@@ -169,7 +240,38 @@ int main(void) {
             pendingLevels--;
         }
 
-        camera.target = currentConnectionState.localPosition;
+        bool isSpectating = (currentConnectionState.health <= 0.0f && currentConnectionState.teamLives <= 0);
+        if (isSpectating) {
+            bool currentSpectatedIsAlive = false;
+            if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
+                if (currentConnectionState.health > 0.0f) currentSpectatedIsAlive = true;
+            } else {
+                Entity* ent = &currentConnectionState.remoteEntities[spectatedPlayerID];
+                if (ent->entityType == ENTITY_CHARACTER &&
+                    ent->character.characterType == CHARACTER_PLAYER &&
+                    ent->character.health > 0.0f) {
+                    currentSpectatedIsAlive = true;
+                }
+            }
+
+            if (!currentSpectatedIsAlive || spectatedPlayerID == 0) {
+                spectatedPlayerID = FindNextAlivePlayer(currentConnectionState.localPlayerIdentification, true);
+            }
+
+            Vector2 targetPos = currentConnectionState.localPosition;
+            if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
+                targetPos = currentConnectionState.localPosition;
+            } else {
+                Entity* ent = &currentConnectionState.remoteEntities[spectatedPlayerID];
+                if (ent->entityType == ENTITY_CHARACTER && ent->character.characterType == CHARACTER_PLAYER) {
+                    targetPos = ent->character.position;
+                }
+            }
+            camera.target = targetPos;
+        } else {
+            camera.target = currentConnectionState.localPosition;
+            spectatedPlayerID = currentConnectionState.localPlayerIdentification;
+        }
 
         BeginDrawing();
             ClearBackground(DARKGRAY);
@@ -250,27 +352,31 @@ int main(void) {
                 }
 
                 if (currentConnectionState.isConnected) {
-                    DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
-                    
-                    // Draw local player high-frequency pulse damage flash if timer is active
-                    if (currentConnectionState.damageFlashTimer > 0) {
-                        f32 flashAlpha = (sinf(currentConnectionState.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
-                        if (flashAlpha > 0.0f) {
-                            DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                    if (currentConnectionState.health <= 0.0f) {
+                        DrawTombstone(currentConnectionState.localPosition, TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), BLUE);
+                    } else {
+                        DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
+                        
+                        // Draw local player high-frequency pulse damage flash if timer is active
+                        if (currentConnectionState.damageFlashTimer > 0) {
+                            f32 flashAlpha = (sinf(currentConnectionState.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
+                            if (flashAlpha > 0.0f) {
+                                DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                            }
                         }
-                    }
-                    
-                    DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
-                    
-                    // Draw local player's death aura
-                    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
-                    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
-                    for (int i = 0; i < 4; i++) {
-                        if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
-                            f32 currentAuraRadius = globalVariables.playerWeapons[i].stats.size * attr->size;
-                            DrawCircleLinesV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.3f));
-                            DrawCircleV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.1f));
-                            break;
+                        
+                        DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
+                        
+                        // Draw local player's death aura
+                        u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                        PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+                        for (int i = 0; i < 4; i++) {
+                            if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
+                                f32 currentAuraRadius = globalVariables.playerWeapons[i].stats.size * attr->size;
+                                DrawCircleLinesV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.3f));
+                                DrawCircleV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.1f));
+                                break;
+                            }
                         }
                     }
                 } else {
@@ -283,6 +389,39 @@ int main(void) {
             DrawGameTimer();
             if (isChoosingUpgrade) DrawUpgradeCards();
             if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
+
+            // Draw glassmorphic spectator panel at bottom center if spectating
+            if (isSpectating) {
+                float panelWidth = 400.0f;
+                float panelHeight = 80.0f;
+                float panelX = (SCREEN_WIDTH - panelWidth) / 2.0f;
+                float panelY = SCREEN_HEIGHT - panelHeight - 40.0f;
+                
+                // Glassmorphic background
+                DrawRectangleRounded((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(BLACK, 0.6f));
+                DrawRectangleRoundedLines((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(WHITE, 0.2f));
+                
+                // Draw a red "SPECTATING" pulsing tag
+                float pulse = 0.5f + 0.5f * sinf(GetTime() * 4.0f);
+                DrawText("SPECTATING", panelX + (panelWidth - MeasureText("SPECTATING", 14)) / 2.0f, panelY + 12, 14, Fade(RED, 0.7f + 0.3f * pulse));
+                
+                // Draw the current player spectated name
+                const char* targetName = "";
+                if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
+                    targetName = TextFormat("Player %u (YOU)", spectatedPlayerID);
+                } else {
+                    targetName = TextFormat("Player %u", spectatedPlayerID);
+                }
+                int nameSize = 22;
+                DrawText(targetName, panelX + (panelWidth - MeasureText(targetName, nameSize)) / 2.0f, panelY + 32, nameSize, WHITE);
+                
+                // Draw left and right cycling arrows and keys
+                DrawText("< A", panelX + 30, panelY + 35, 16, GRAY);
+                DrawText("D >", panelX + panelWidth - 30 - MeasureText("D >", 16), panelY + 35, 16, GRAY);
+                
+                DrawText("Press [TAB] to view stats", panelX + (panelWidth - MeasureText("Press [TAB] to view stats", 10)) / 2.0f, panelY + 60, 10, LIGHTGRAY);
+            }
+
             DrawFPS(10, 10);
 
             // Draw active notification
@@ -317,10 +456,15 @@ int main(void) {
                 
                 // Draw local health bar
                 f32 healthPercent = currentConnectionState.health / currentConnectionState.maxHealth;
+                if (healthPercent < 0.0f) healthPercent = 0.0f;
                 DrawRectangle(10, 60, 200, 20, DARKGRAY);
                 DrawRectangle(10, 60, (int)(200 * healthPercent), 20, RED);
                 DrawRectangleLines(10, 60, 200, 20, BLACK);
                 DrawText(TextFormat("%.0f / %.0f", currentConnectionState.health, currentConnectionState.maxHealth), 70, 65, 10, WHITE);
+                
+                // Draw lives counter next to the health bar
+                DrawHeart((Vector2){ 235, 70 }, 10, RED);
+                DrawText(TextFormat("x %d", currentConnectionState.teamLives), 255, 62, 16, WHITE);
             }
         EndDrawing();
     }
@@ -683,14 +827,23 @@ void Player_UpdateMovement(f32 deltaTime) {
 
     // Check for predicted local respawn when health <= 0
     if (currentConnectionState.health <= 0.0f) {
-        currentConnectionState.health = currentConnectionState.maxHealth;
-        currentConnectionState.localPosition = (Vector2){ 0, 0 };
-        currentConnectionState.iframeTimer = 2.0f; // 2 seconds spawn protection
-        currentConnectionState.damageFlashTimer = 2.0f; // 2 seconds spawn protection visual damage flash
-        
-        // Notify server of respawn position
-        Network_SendVelocity(&currentConnectionState, (Vector2){ 0, 0 });
-        printf("[DEATH] Player died! Predicted local respawn at spawn (0, 0)...\n");
+        if (currentConnectionState.teamLives > 0) {
+            currentConnectionState.health = currentConnectionState.maxHealth;
+            currentConnectionState.localPosition = (Vector2){ 0, 0 };
+            currentConnectionState.iframeTimer = 2.0f; // 2 seconds spawn protection
+            currentConnectionState.damageFlashTimer = 2.0f; // 2 seconds spawn protection visual damage flash
+            
+            // Predict life decrement
+            currentConnectionState.teamLives--;
+
+            // Notify server of respawn position
+            Network_SendVelocity(&currentConnectionState, (Vector2){ 0, 0 });
+            printf("[DEATH] Player died! Predicted local respawn at spawn (0, 0)...\n");
+        } else {
+            // Out of lives! Send zero velocity/position to server
+            Network_SendVelocity(&currentConnectionState, (Vector2){ 0, 0 });
+            return;
+        }
     }
 
     u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
@@ -823,13 +976,23 @@ void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isA
 void Input_Update(InputState* state) {
     state->movementDirection = (Vector2){ 0, 0 };
     
-    if (IsKeyDown(KEY_W)) state->movementDirection.y -= 1;
-    if (IsKeyDown(KEY_S)) state->movementDirection.y += 1;
-    if (IsKeyDown(KEY_A)) state->movementDirection.x -= 1;
-    if (IsKeyDown(KEY_D)) state->movementDirection.x += 1;
-    
-    if (state->movementDirection.x != 0 || state->movementDirection.y != 0) {
-        state->movementDirection = Vector2Normalize(state->movementDirection);
+    bool isSpectating = (currentConnectionState.health <= 0.0f && currentConnectionState.teamLives <= 0);
+    if (isSpectating) {
+        if (IsKeyPressed(KEY_A) || IsKeyPressed(KEY_LEFT)) {
+            spectatedPlayerID = FindNextAlivePlayer(spectatedPlayerID, false);
+        }
+        if (IsKeyPressed(KEY_D) || IsKeyPressed(KEY_RIGHT)) {
+            spectatedPlayerID = FindNextAlivePlayer(spectatedPlayerID, true);
+        }
+    } else {
+        if (IsKeyDown(KEY_W)) state->movementDirection.y -= 1;
+        if (IsKeyDown(KEY_S)) state->movementDirection.y += 1;
+        if (IsKeyDown(KEY_A)) state->movementDirection.x -= 1;
+        if (IsKeyDown(KEY_D)) state->movementDirection.x += 1;
+        
+        if (state->movementDirection.x != 0 || state->movementDirection.y != 0) {
+            state->movementDirection = Vector2Normalize(state->movementDirection);
+        }
     }
     
     // Handle Selection if active
@@ -852,14 +1015,19 @@ void Render_Entity(const Entity* entity) {
     switch (entity->entityType) {
         case ENTITY_CHARACTER:
             if (entity->character.characterType == CHARACTER_PLAYER) {
-                DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
-                DrawText("PLAYER", entity->character.position.x - 20, entity->character.position.y - 40, 10, MAROON);
-                
-                // Draw remote player high-frequency pulse damage flash if timer is active
-                if (entity->character.damageFlashTimer > 0) {
-                    f32 flashAlpha = (sinf(entity->character.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
-                    if (flashAlpha > 0.0f) {
-                        DrawCircleV(entity->character.position, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                u32 playerID = (u32)(entity - currentConnectionState.remoteEntities);
+                if (entity->character.health <= 0.0f) {
+                    DrawTombstone(entity->character.position, TextFormat("PLAYER %u", playerID), MAROON);
+                } else {
+                    DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
+                    DrawText(TextFormat("PLAYER %u", playerID), entity->character.position.x - 30, entity->character.position.y - 40, 10, MAROON);
+                    
+                    // Draw remote player high-frequency pulse damage flash if timer is active
+                    if (entity->character.damageFlashTimer > 0) {
+                        f32 flashAlpha = (sinf(entity->character.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
+                        if (flashAlpha > 0.0f) {
+                            DrawCircleV(entity->character.position, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                        }
                     }
                 }
             } else if (entity->character.characterType == CHARACTER_ENEMY) {
@@ -1339,13 +1507,70 @@ void DrawStatsOverlay(void) {
     DrawRectangleRec(hud, Fade(BLACK, 0.85f));
     DrawRectangleLinesEx(hud, 3, GOLD);
     
+    // Determine which player we are spectating/viewing
+    u32 targetPlayerID = spectatedPlayerID;
+    if (targetPlayerID == 0) {
+        targetPlayerID = currentConnectionState.localPlayerIdentification;
+    }
+    
     // 3. Header title
-    DrawText("PLAYER PROFILE & STATS", hud.x + 350, hud.y + 20, 24, GOLD);
+    const char* headerText = "";
+    if (targetPlayerID == currentConnectionState.localPlayerIdentification) {
+        headerText = TextFormat("PLAYER PROFILE & STATS (YOU - ID: %u)", targetPlayerID);
+    } else {
+        headerText = TextFormat("PLAYER PROFILE & STATS (PLAYER %u)", targetPlayerID);
+    }
+    DrawText(headerText, hud.x + (hud.width - MeasureText(headerText, 24)) / 2.0f, hud.y + 20, 24, GOLD);
     DrawLine(hud.x + 50, hud.y + 60, hud.x + 974, hud.y + 60, GRAY);
     
-    // Get local player attributes
-    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
-    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+    // Get player attributes
+    u32 spectatedIndex = (targetPlayerID - 1) % MAX_REMOTE_PLAYERS;
+    PlayerAttributes* attr = &currentConnectionState.playerAttributes[spectatedIndex];
+    
+    // Reconstruct weapons and relics for display
+    Weapon displayWeapons[4];
+    Relic displayRelics[4];
+    for (int i = 0; i < 4; i++) {
+        displayWeapons[i].type = WEAPON_UNDEFINED;
+        displayWeapons[i].level = 0;
+        displayRelics[i].type = RELIC_UNDEFINED;
+        displayRelics[i].level = 0;
+    }
+    
+    if (targetPlayerID == currentConnectionState.localPlayerIdentification) {
+        for (int i = 0; i < 4; i++) {
+            displayWeapons[i] = globalVariables.playerWeapons[i];
+            displayRelics[i] = globalVariables.playerRelics[i];
+        }
+    } else {
+        u32 entityIndex = targetPlayerID % MAX_REMOTE_ENTITIES;
+        Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+        if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_PLAYER) {
+            int slotCount = 0;
+            for (int w = 0; w < 5; w++) {
+                u8 level = entity->character.weaponLevels[w];
+                if (level > 0 && slotCount < 4) {
+                    WeaponType wType = (WeaponType)(w + 1);
+                    Weapon_Initialize(&displayWeapons[slotCount], wType);
+                    displayWeapons[slotCount].level = level;
+                    for (int l = 1; l < level; l++) {
+                        Weapon_Upgrade(&displayWeapons[slotCount]);
+                    }
+                    slotCount++;
+                }
+            }
+            
+            int relicSlotCount = 0;
+            for (int r = 0; r < 7; r++) {
+                u8 level = entity->character.relicLevels[r];
+                if (level > 0 && relicSlotCount < 4) {
+                    displayRelics[relicSlotCount].type = (RelicType)(r + 1);
+                    displayRelics[relicSlotCount].level = level;
+                    relicSlotCount++;
+                }
+            }
+        }
+    }
     
     // 4. Left Column - Equipped Gear
     float leftX = hud.x + 50;
@@ -1357,7 +1582,7 @@ void DrawStatsOverlay(void) {
     Color weaponColors[] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
     for (int i = 0; i < 4; i++) {
         float slotY = hud.y + 145 + i * 32;
-        Weapon* w = &globalVariables.playerWeapons[i];
+        Weapon* w = &displayWeapons[i];
         if (w->type == WEAPON_UNDEFINED) {
             DrawText(TextFormat("[%d] [Empty Weapon Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
         } else {
@@ -1377,7 +1602,7 @@ void DrawStatsOverlay(void) {
     Color relicColors[] = { WHITE, RED, ORANGE, GOLD, PURPLE, LIME, PINK, VIOLET };
     for (int i = 0; i < 4; i++) {
         float slotY = hud.y + 325 + i * 32;
-        Relic* r = &globalVariables.playerRelics[i];
+        Relic* r = &displayRelics[i];
         if (r->type == RELIC_UNDEFINED) {
             DrawText(TextFormat("[%d] [Empty Relic Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
         } else {

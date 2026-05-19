@@ -76,6 +76,7 @@ typedef struct {
 typedef struct {
     PacketHeader header;
     f32 gameTime;
+    i32 teamLives;
     u32 count;
     RemotePlayerState players[MAX_REMOTE_PLAYERS];
 } PacketWorldState;
@@ -209,6 +210,7 @@ typedef struct ConnectionState {
 
     ClientNotification notificationQueue[16];
     i32 notificationCount;
+    i32 teamLives;
 } ConnectionState;
 
 bool Network_InitConnection(ConnectionState* state);
