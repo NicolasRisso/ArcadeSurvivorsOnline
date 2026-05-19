@@ -109,6 +109,9 @@ int main(void) {
             currentConnectionState.iframeTimer -= deltaTime;
             if (currentConnectionState.iframeTimer < 0) currentConnectionState.iframeTimer = 0;
         }
+        if (currentConnectionState.isConnected) {
+            currentConnectionState.gameTime += deltaTime;
+        }
 
         Enemy_UpdateMovement(deltaTime);
         Player_UpdateMovement(deltaTime);
@@ -277,6 +280,7 @@ int main(void) {
             
             // UI Overlay
             DrawXPBar();
+            DrawGameTimer();
             if (isChoosingUpgrade) DrawUpgradeCards();
             if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
             DrawFPS(10, 10);
@@ -947,6 +951,31 @@ void Render_Map(void) {
         DrawLine(gridIndex, -MAP_SIZE/2, gridIndex, MAP_SIZE/2, LIGHTGRAY);
         DrawLine(-MAP_SIZE/2, gridIndex, MAP_SIZE/2, gridIndex, LIGHTGRAY);
     }
+}
+
+void DrawGameTimer(void) {
+    if (!currentConnectionState.isConnected) return;
+    
+    f32 elapsed = currentConnectionState.gameTime;
+    Color timerColor = WHITE;
+    f32 displayTime = 0.0f;
+    
+    if (elapsed < 600.0f) {
+        displayTime = 600.0f - elapsed;
+        timerColor = WHITE;
+    } else {
+        displayTime = elapsed - 600.0f;
+        timerColor = RED;
+    }
+    
+    int minutes = (int)displayTime / 60;
+    int seconds = (int)displayTime % 60;
+    
+    const char* timeText = TextFormat("%02d:%02d", minutes, seconds);
+    int fontSize = 24;
+    int textWidth = MeasureText(timeText, fontSize);
+    
+    DrawText(timeText, SCREEN_WIDTH - textWidth - 50, 55, fontSize, timerColor);
 }
 
 void DrawXPBar(void) {

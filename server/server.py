@@ -119,7 +119,7 @@ SPAWN_CONFIG = {
 HEADER_FORMAT = "<BId"
 IDENTIFICATION_RESPONSE_FORMAT = HEADER_FORMAT
 VELOCITY_UPDATE_FORMAT = HEADER_FORMAT + "ffff"
-WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "I"
+WORLD_STATE_HEADER_FORMAT = HEADER_FORMAT + "fI"
 PLAYER_STATE_FORMAT = "<IffffBf"
 ENTITY_SPAWN_FORMAT = HEADER_FORMAT + "IBBffIffffi"
 ENTITY_SNAPSHOT_HEADER_FORMAT = HEADER_FORMAT + "HH"
@@ -1037,7 +1037,11 @@ class Server:
         playerList = list(self.players.values())
         playerCount = len(playerList)
         
-        worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, playerCount)
+        elapsed = 0.0
+        if self.start_time is not None:
+            elapsed = currentTime - self.start_time
+            
+        worldStateData = struct.pack(WORLD_STATE_HEADER_FORMAT, PACKET_WORLD_STATE, 0, currentTime, elapsed, playerCount)
         for player in playerList:
             worldStateData += struct.pack(PLAYER_STATE_FORMAT, 
                                           player["identification"], 

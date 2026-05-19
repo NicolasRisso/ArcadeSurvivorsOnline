@@ -265,5 +265,6 @@ void Input_Update(InputState* state);
 //~ Begin of Renderer
 void Render_Entity(const Entity* entity);
 void Render_Map(void);
+void DrawGameTimer(void);
 void SpawnDamagePopup(Vector2 position, f32 damage, Color color);
 //~ End of Renderer

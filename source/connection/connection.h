@@ -75,6 +75,7 @@ typedef struct {
 
 typedef struct {
     PacketHeader header;
+    f32 gameTime;
     u32 count;
     RemotePlayerState players[MAX_REMOTE_PLAYERS];
 } PacketWorldState;
@@ -192,6 +193,7 @@ typedef struct ConnectionState {
     
     f32 damageFlashTimer;
     f32 iframeTimer;
+    f32 gameTime;
     
     PlayerAttributes playerAttributes[MAX_REMOTE_PLAYERS];
     Entity remoteEntities[MAX_REMOTE_ENTITIES];
