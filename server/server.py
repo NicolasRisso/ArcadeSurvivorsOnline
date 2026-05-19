@@ -321,7 +321,7 @@ class Server:
                 
                 if spawn_duration > max_lifetime:
                     if projectile_type == PROJECTILE_BOMB:
-                        self.spawn_explosion(entity["position_x"], entity["position_y"], BOMB_RADIUS, entity.get("ownerID", 0))
+                        self.spawn_explosion(entity["position_x"], entity["position_y"], entity["max_health"], entity.get("ownerID", 0))
                     del self.entities[index]
                     self.broadcast_despawn(index)
 

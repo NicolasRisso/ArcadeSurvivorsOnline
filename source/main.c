@@ -230,8 +230,12 @@ int main(void) {
                     if (entity->entityType == ENTITY_CHARACTER) {
                         // Draw Death Aura for remote players
                         if (entity->character.weaponsMask & (1 << (WEAPON_DEATH_AURA - 1))) {
-                            DrawCircleLinesV(entity->character.position, AURA_RADIUS, Fade(BLACK, 0.3f));
-                            DrawCircleV(entity->character.position, AURA_RADIUS, Fade(BLACK, 0.1f));
+                            u32 remoteID = entityIndex;
+                            u32 remoteIndex = (remoteID - 1) % MAX_REMOTE_PLAYERS;
+                            f32 remoteSizeMult = currentConnectionState.playerAttributes[remoteIndex].size;
+                            f32 currentAuraRadius = AURA_RADIUS * remoteSizeMult;
+                            DrawCircleLinesV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.3f));
+                            DrawCircleV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.1f));
                         }
                     }
                     Render_Entity(entity);
@@ -251,10 +255,13 @@ int main(void) {
                     DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
                     
                     // Draw local player's death aura
+                    u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                    PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
                     for (int i = 0; i < 5; i++) {
                         if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
-                            DrawCircleLinesV(currentConnectionState.localPosition, AURA_RADIUS, Fade(BLACK, 0.3f));
-                            DrawCircleV(currentConnectionState.localPosition, AURA_RADIUS, Fade(BLACK, 0.1f));
+                            f32 currentAuraRadius = globalVariables.playerWeapons[i].stats.size * attr->size;
+                            DrawCircleLinesV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.3f));
+                            DrawCircleV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.1f));
                             break;
                         }
                     }
@@ -519,7 +526,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                     if (remoteEntity->entityType == ENTITY_CHARACTER && remoteEntity->character.characterType == CHARACTER_ENEMY) {
                         if (CheckCollisionCircles(proj->position, 10, remoteEntity->character.position, PLAYER_RADIUS)) {
                             // Prediction: Hide fireball and show local explosion instantly
-                            f32 explosionRadius = FIREBALL_RADIUS * ownerAttr->size;
+                            f32 explosionRadius = proj->radius;
                             f32 explosionDamage = 50.0f * ownerAttr->damage;
 
                             for (int v = 0; v < 128; v++) {
@@ -578,7 +585,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                 }
             } else if (proj->type == PROJECTILE_BOMB) {
                 if (proj->lifetime <= 0.0f) { // Explosion trigger (BOMB_DELAY=2.0)
-                    f32 bombRadius = BOMB_RADIUS * ownerAttr->size;
+                    f32 bombRadius = proj->radius;
                     f32 bombDamage = 500.0f * ownerAttr->damage;
 
                     // Prediction: Hide bomb and show local explosion instantly
@@ -611,7 +618,7 @@ void Projectile_UpdateMovement(f32 deltaTime) {
                 // Spikes deal damage every 0.15s
                 proj->tickTimer += deltaTime;
                 if (proj->tickTimer >= 0.15f) {
-                    f32 spikeRadius = SPIKE_RADIUS * ownerAttr->size;
+                    f32 spikeRadius = SPIKE_RADIUS * proj->radius;
                     f32 spikeDamage = 20.0f * ownerAttr->damage;
 
                     for (i32 otherIndex = 0; otherIndex < MAX_REMOTE_ENTITIES; otherIndex++) {
@@ -901,15 +908,16 @@ void Render_Entity(const Entity* entity) {
                 DrawCircleV(entity->proj.position, 6, RED);
                 // Draw explosion radius preview if about to explode
                 if (entity->proj.lifetime < 1.0f) {
-                    DrawCircleLinesV(entity->proj.position, BOMB_RADIUS, Fade(RED, 0.5f));
+                    DrawCircleLinesV(entity->proj.position, entity->proj.radius, Fade(RED, 0.5f));
                 }
             } else if (entity->proj.type == PROJECTILE_SPIKE) {
-                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 20},
-                             (Vector2){entity->proj.position.x - 15, entity->proj.position.y + 10},
-                             (Vector2){entity->proj.position.x + 15, entity->proj.position.y + 10}, BROWN);
-                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 25},
-                             (Vector2){entity->proj.position.x - 10, entity->proj.position.y + 5},
-                             (Vector2){entity->proj.position.x + 10, entity->proj.position.y + 5}, GRAY);
+                f32 spikeSize = entity->proj.radius;
+                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 20.0f * spikeSize},
+                             (Vector2){entity->proj.position.x - 15.0f * spikeSize, entity->proj.position.y + 10.0f * spikeSize},
+                             (Vector2){entity->proj.position.x + 15.0f * spikeSize, entity->proj.position.y + 10.0f * spikeSize}, BROWN);
+                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 25.0f * spikeSize},
+                             (Vector2){entity->proj.position.x - 10.0f * spikeSize, entity->proj.position.y + 5.0f * spikeSize},
+                             (Vector2){entity->proj.position.x + 10.0f * spikeSize, entity->proj.position.y + 5.0f * spikeSize}, GRAY);
             } else if (entity->proj.type == PROJECTILE_EXPLOSION) {
                 f32 scale = entity->proj.lifetime / 0.5f; // lifetime goes from 0.5 to 0
                 f32 radius = entity->proj.radius;
