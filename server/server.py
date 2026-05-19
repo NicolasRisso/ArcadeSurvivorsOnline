@@ -559,6 +559,9 @@ class Server:
 
         elif packetType == PACKET_ENEMY_DEATH_REPORT:
             if address in self.players:
+                player = self.players[address]
+                if player.get("health", 100.0) <= 0.0:
+                    return
                 if len(data) >= struct.calcsize(ENEMY_DEATH_REPORT_HEADER_FORMAT):
                     _, _, _, count = struct.unpack(ENEMY_DEATH_REPORT_HEADER_FORMAT, data[:struct.calcsize(ENEMY_DEATH_REPORT_HEADER_FORMAT)])
                     
@@ -577,6 +580,9 @@ class Server:
 
         elif packetType == PACKET_DAMAGE_BATCH:
             if address in self.players:
+                player = self.players[address]
+                if player.get("health", 100.0) <= 0.0:
+                    return
                 header_size = struct.calcsize(DAMAGE_BATCH_HEADER_FORMAT)
                 if len(data) >= header_size:
                     _, _, _, count = struct.unpack(DAMAGE_BATCH_HEADER_FORMAT, data[:header_size])
@@ -638,6 +644,9 @@ class Server:
 
         elif packetType == PACKET_WEAPON_FIRE:
             if address in self.players:
+                player = self.players[address]
+                if player.get("health", 100.0) <= 0.0:
+                    return
                 if len(data) >= struct.calcsize(WEAPON_FIRE_FORMAT):
                     header = data[:struct.calcsize(HEADER_FORMAT)]
                     payload = data[struct.calcsize(HEADER_FORMAT):]
@@ -694,6 +703,9 @@ class Server:
 
         elif packetType == PACKET_ENTITY_DAMAGE:
             if address in self.players:
+                player = self.players[address]
+                if player.get("health", 100.0) <= 0.0:
+                    return
                 if len(data) >= struct.calcsize(ENTITY_DAMAGE_FORMAT):
                     _, _, _, eIndex, damage = struct.unpack(ENTITY_DAMAGE_FORMAT, data[:struct.calcsize(ENTITY_DAMAGE_FORMAT)])
                     
@@ -816,6 +828,9 @@ class Server:
 
         elif packetType == PACKET_XP_COLLECT:
             if address in self.players:
+                player = self.players[address]
+                if player.get("health", 100.0) <= 0.0:
+                    return
                 if len(data) >= struct.calcsize(XP_COLLECT_FORMAT):
                     _, _, _, crystalIndex = struct.unpack(XP_COLLECT_FORMAT, data[:struct.calcsize(XP_COLLECT_FORMAT)])
                     if crystalIndex in self.entities:

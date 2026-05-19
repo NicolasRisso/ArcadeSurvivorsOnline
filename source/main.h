@@ -65,6 +65,16 @@ typedef struct u16Range { u16 minimum; u16 maximum; } u16Range;
 //~ End of Utility Structs
 
 //~ Begin of Enums
+typedef enum GameState {
+    STATE_MAIN_MENU = 0,
+    STATE_IN_GAME = 1
+} GameState;
+
+typedef enum InGameState {
+    IN_GAME_PLAYING = 0,
+    IN_GAME_SPECTATING = 1
+} InGameState;
+
 typedef enum EntityType : u8 {
     ENTITY_UNDEFINED = 0,
     ENTITY_CHARACTER = 1,
@@ -232,6 +242,8 @@ typedef struct GlobalVariables{
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
+extern GameState currentGameState;
+extern InGameState currentInGameState;
 
 void Enemy_UpdateMovement(f32 deltaTime);
 

@@ -5,6 +5,8 @@
 GlobalVariables globalVariables = { 0 };
 InputState currentInputState = { 0 };
 ConnectionState currentConnectionState = { 0 };
+GameState currentGameState = STATE_IN_GAME;
+InGameState currentInGameState = IN_GAME_PLAYING;
 
 f32 playerXP = 0.0f;
 f32 xpToNextLevel = 100.0f;
@@ -240,8 +242,16 @@ int main(void) {
             pendingLevels--;
         }
 
-        bool isSpectating = (currentConnectionState.health <= 0.0f && currentConnectionState.teamLives <= 0);
-        if (isSpectating) {
+        if (currentGameState == STATE_IN_GAME) {
+            bool isSpectating = (currentConnectionState.health <= 0.0f && currentConnectionState.teamLives <= 0);
+            if (isSpectating) {
+                currentInGameState = IN_GAME_SPECTATING;
+            } else {
+                currentInGameState = IN_GAME_PLAYING;
+            }
+        }
+
+        if (currentInGameState == IN_GAME_SPECTATING) {
             bool currentSpectatedIsAlive = false;
             if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
                 if (currentConnectionState.health > 0.0f) currentSpectatedIsAlive = true;
@@ -391,7 +401,7 @@ int main(void) {
             if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
 
             // Draw glassmorphic spectator panel at bottom center if spectating
-            if (isSpectating) {
+            if (currentInGameState == IN_GAME_SPECTATING) {
                 float panelWidth = 400.0f;
                 float panelHeight = 80.0f;
                 float panelX = (SCREEN_WIDTH - panelWidth) / 2.0f;
@@ -612,6 +622,7 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 // --- Weapon System Implementation ---
 void Weapons_Update(f32 deltaTime) {
     if (!currentConnectionState.isConnected) return;
+    if (currentInGameState == IN_GAME_SPECTATING || currentConnectionState.health <= 0.0f) return;
 
     u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
     PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
@@ -825,6 +836,11 @@ void SpawnDamagePopup(Vector2 position, f32 damage, Color color) {
 void Player_UpdateMovement(f32 deltaTime) {
     if (!Network_IsConnected(&currentConnectionState)) return;
 
+    if (currentInGameState == IN_GAME_SPECTATING) {
+        Network_SendVelocity(&currentConnectionState, (Vector2){ 0, 0 });
+        return;
+    }
+
     // Check for predicted local respawn when health <= 0
     if (currentConnectionState.health <= 0.0f) {
         if (currentConnectionState.teamLives > 0) {
@@ -976,22 +992,23 @@ void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isA
 void Input_Update(InputState* state) {
     state->movementDirection = (Vector2){ 0, 0 };
     
-    bool isSpectating = (currentConnectionState.health <= 0.0f && currentConnectionState.teamLives <= 0);
-    if (isSpectating) {
-        if (IsKeyPressed(KEY_A) || IsKeyPressed(KEY_LEFT)) {
-            spectatedPlayerID = FindNextAlivePlayer(spectatedPlayerID, false);
-        }
-        if (IsKeyPressed(KEY_D) || IsKeyPressed(KEY_RIGHT)) {
-            spectatedPlayerID = FindNextAlivePlayer(spectatedPlayerID, true);
-        }
-    } else {
-        if (IsKeyDown(KEY_W)) state->movementDirection.y -= 1;
-        if (IsKeyDown(KEY_S)) state->movementDirection.y += 1;
-        if (IsKeyDown(KEY_A)) state->movementDirection.x -= 1;
-        if (IsKeyDown(KEY_D)) state->movementDirection.x += 1;
-        
-        if (state->movementDirection.x != 0 || state->movementDirection.y != 0) {
-            state->movementDirection = Vector2Normalize(state->movementDirection);
+    if (currentGameState == STATE_IN_GAME) {
+        if (currentInGameState == IN_GAME_SPECTATING) {
+            if (IsKeyPressed(KEY_A) || IsKeyPressed(KEY_LEFT)) {
+                spectatedPlayerID = FindNextAlivePlayer(spectatedPlayerID, false);
+            }
+            if (IsKeyPressed(KEY_D) || IsKeyPressed(KEY_RIGHT)) {
+                spectatedPlayerID = FindNextAlivePlayer(spectatedPlayerID, true);
+            }
+        } else {
+            if (IsKeyDown(KEY_W)) state->movementDirection.y -= 1;
+            if (IsKeyDown(KEY_S)) state->movementDirection.y += 1;
+            if (IsKeyDown(KEY_A)) state->movementDirection.x -= 1;
+            if (IsKeyDown(KEY_D)) state->movementDirection.x += 1;
+            
+            if (state->movementDirection.x != 0 || state->movementDirection.y != 0) {
+                state->movementDirection = Vector2Normalize(state->movementDirection);
+            }
         }
     }
     
