@@ -265,7 +265,7 @@ int main(void) {
                     // Draw local player's death aura
                     u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
                     PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
-                    for (int i = 0; i < 5; i++) {
+                    for (int i = 0; i < 4; i++) {
                         if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
                             f32 currentAuraRadius = globalVariables.playerWeapons[i].stats.size * attr->size;
                             DrawCircleLinesV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.3f));

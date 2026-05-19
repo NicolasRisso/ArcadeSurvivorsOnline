@@ -108,6 +108,16 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 connectionState->isConnected = true;
                 connectionState->lastHeartbeatReceived = GetTime();
                 printf("Connected! Identification: %u\n", connectionState->localPlayerIdentification);
+                
+                // Authoritatively register client starting weapons and relics with the server
+                for (int i = 0; i < 4; i++) {
+                    if (globalVariables.playerWeapons[i].type != WEAPON_UNDEFINED) {
+                        Network_SendUpgradeUpdate(connectionState, 0, globalVariables.playerWeapons[i].type, globalVariables.playerWeapons[i].level);
+                    }
+                    if (globalVariables.playerRelics[i].type != RELIC_UNDEFINED) {
+                        Network_SendUpgradeUpdate(connectionState, 1, globalVariables.playerRelics[i].type, globalVariables.playerRelics[i].level);
+                    }
+                }
                 break;
             }
             case PACKET_HEARTBEAT_ACK: {
