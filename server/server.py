@@ -832,6 +832,7 @@ class Server:
                     if is_valid:
                         if is_relic:
                             player["relic_levels"][upgrade_type - 1] = level
+                            self.recalculate_player_attributes(player)
                         else:
                             player["weapon_levels"][upgrade_type - 1] = level
                             
@@ -1027,6 +1028,53 @@ class Server:
         packet = struct.pack(ATTRIBUTE_UPDATE_FORMAT, PACKET_ATTRIBUTE_UPDATE, playerIdentification, time.time(), *attributes)
         for address in self.players:
             self.serverSocket.sendto(packet, address)
+
+    def recalculate_player_attributes(self, player):
+        # Base/Default values matching main.h
+        maxHealth = 100.0
+        damage = 1.0
+        attackSpeed = 1.0
+        movementSpeed = 1.0
+        size = 1.0
+        xpGained = 1.0
+        lifeSteal = 0.0
+        
+        relic_levels = player.get("relic_levels", [0, 0, 0, 0, 0, 0, 0])
+        
+        # Apply relic leveling mathematics authoritatively
+        # RELIC_HEALTH (1) -> levelup health = 0.12
+        maxHealth += 100.0 * 0.12 * relic_levels[0]
+        # RELIC_DAMAGE (2) -> levelup damage = 0.08
+        damage += 0.08 * relic_levels[1]
+        # RELIC_ATTACK_SPEED (3) -> levelup attack speed = 0.06
+        attackSpeed += 0.06 * relic_levels[2]
+        # RELIC_SIZE (4) -> levelup size = 0.15
+        size += 0.15 * relic_levels[3]
+        # RELIC_MOVEMENT_SPEED (5) -> levelup movement speed = 0.09
+        movementSpeed += 0.09 * relic_levels[4]
+        # RELIC_XP_GAIN (6) -> levelup xp gain = 0.08
+        xpGained += 0.08 * relic_levels[5]
+        # RELIC_LIFE_STEAL (7) -> levelup life steal = 0.01
+        lifeSteal += 0.01 * relic_levels[6]
+        
+        # Store recalculated attributes
+        old_attributes = player.get("attributes", (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0))
+        new_attributes = (maxHealth, damage, attackSpeed, movementSpeed, size, xpGained, lifeSteal)
+        player["attributes"] = new_attributes
+        
+        # Proportional health adjustment for maxHealth increase/decrease
+        old_max = old_attributes[0]
+        new_max = new_attributes[0]
+        diff = new_max - old_max
+        if diff != 0:
+            player["health"] += diff
+            if player["health"] > new_max:
+                player["health"] = new_max
+            elif player["health"] < 0:
+                player["health"] = 0
+                
+        # Broadcast updated attributes to all clients
+        self.broadcast_attribute_update(player["identification"], new_attributes)
 
     def broadcast_upgrade_update(self, playerIdentification, is_relic, upgrade_type, level):
         packet = struct.pack(UPGRADE_UPDATE_FORMAT, PACKET_UPGRADE_UPDATE, playerIdentification, time.time(), is_relic, upgrade_type, level)

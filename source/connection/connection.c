@@ -119,6 +119,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                         Network_SendUpgradeUpdate(connectionState, 1, globalVariables.playerRelics[i].type, globalVariables.playerRelics[i].level);
                     }
                 }
+                Player_RecalculateAttributes();
                 break;
             }
             case PACKET_HEARTBEAT_ACK: {
