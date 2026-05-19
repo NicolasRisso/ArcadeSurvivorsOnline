@@ -34,6 +34,7 @@ PACKET_PROJECTILE_EXPLODE = 12
 PACKET_DAMAGE_BATCH = 13
 PACKET_XP_COLLECT = 14
 PACKET_ATTRIBUTE_UPDATE = 15
+PACKET_NOTIFICATION = 16
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
@@ -74,6 +75,7 @@ CHARACTER_ENEMY = 2
 ENEMY_CLASS_NORMAL = 0
 ENEMY_CLASS_FAST = 1
 ENEMY_CLASS_TANK = 2
+ENEMY_CLASS_BOSS = 3
 
 # Entity Types
 ENTITY_UNDEFINED = 0
@@ -130,6 +132,7 @@ DAMAGE_BATCH_HEADER_FORMAT = HEADER_FORMAT + "I"
 DAMAGE_ENTRY_FORMAT = "If"
 XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
 ATTRIBUTE_UPDATE_FORMAT = HEADER_FORMAT + "fffffff"
+NOTIFICATION_FORMAT = HEADER_FORMAT + "64sBBBffB"
 
 class Server:
     def __init__(self):
@@ -148,6 +151,10 @@ class Server:
         self.last_log_flush_time = time.time()
         self.start_time = None
         self.difficulty = 0.0
+        self.last_swarm_warning_cycle = -1
+        self.last_boss_warning_cycle = -1
+        self.last_boss_spawn_cycle = -1
+        self.is_swarm_active = False
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
     def log(self, message):
@@ -187,6 +194,7 @@ class Server:
             
             # 2. Update Simulation
             self.update_server_simulation(delta_time)
+            self.update_events(current_time)
             self.update_spawner(current_time)
             self.cleanup_disconnected_players()
             self.broadcast_world_state_snapshot()
@@ -205,6 +213,7 @@ class Server:
         for player in self.players.values():
             if player.get("health", 100.0) <= 0.0:
                 # Server Authoritative Respawn
+                self.broadcast_notification(f"Player {player['identification']} Died", 255, 0, 0, 5.0, 1.0, False)
                 max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
                 player["health"] = max_health
                 player["position_x"] = 0.0
@@ -320,20 +329,28 @@ class Server:
         if not self.players:
             self.start_time = None
             self.difficulty = 0.0
+            self.last_swarm_warning_cycle = -1
+            self.last_boss_warning_cycle = -1
+            self.last_boss_spawn_cycle = -1
+            self.is_swarm_active = False
             return
 
-        if current_time - self.last_spawner_time < SPAWN_INTERVAL:
+        if self.start_time is None:
+            self.start_time = current_time
+        
+        self.difficulty = (current_time - self.start_time) / 6.0
+
+        difficulty_mult = 1.0 + (self.difficulty / 20.0) * 1.1
+        swarm_mult = 2.0 if self.is_swarm_active else 1.0
+        actual_interval = SPAWN_INTERVAL / (difficulty_mult * swarm_mult)
+
+        if current_time - self.last_spawner_time < actual_interval:
             return
         
         if len(self.entities) >= MAX_ENEMIES:
             return
 
         self.last_spawner_time = current_time
-
-        if self.start_time is None:
-            self.start_time = current_time
-        
-        self.difficulty = (current_time - self.start_time) / 6.0
         
         # Filter available spawn groups based on difficulty progression
         filtered_shapes = []
@@ -555,6 +572,7 @@ class Server:
                                 # Verify if any active enemy is close to the player to validate collision
                                 px, py = target_player["position_x"], target_player["position_y"]
                                 enemy_found = False
+                                base_damage = 10.0
                                 for ent in self.entities.values():
                                     if ent["type"] == ENTITY_CHARACTER and ent["charType"] == CHARACTER_ENEMY:
                                         dx = px - ent["position_x"]
@@ -562,15 +580,18 @@ class Server:
                                         dist = math.sqrt(dx*dx + dy*dy)
                                         if dist <= 120.0: # generous threshold to account for network latency/interpolation
                                             enemy_found = True
+                                            if ent.get("enemyClass") == ENEMY_CLASS_BOSS:
+                                                base_damage = 40.0
                                             break
                                             
                                 if enemy_found:
                                     stat_mult = 1.0 + (self.difficulty / 20.0) * 1.25
-                                    expected_damage = 10.0 * stat_mult
+                                    expected_damage = base_damage * stat_mult
                                     
                                     target_player["health"] -= expected_damage
                                     target_player["iframe_until"] = current_time + 0.5
                                     if target_player["health"] <= 0.0:
+                                        self.broadcast_notification(f"Player {eIndex} Died", 255, 0, 0, 5.0, 1.0, False)
                                         max_health = target_player.get("attributes", [100.0])[0] if target_player.get("attributes") else 100.0
                                         target_player["health"] = max_health
                                         target_player["position_x"] = 0.0
@@ -678,6 +699,7 @@ class Server:
                                 player["health"] -= damage
                                 player["iframe_until"] = current_time + 0.5
                                 if player["health"] <= 0.0:
+                                    self.broadcast_notification(f"Player {playerIdentification} Died", 255, 0, 0, 5.0, 1.0, False)
                                     max_health = player.get("attributes", [100.0])[0] if player.get("attributes") else 100.0
                                     player["health"] = max_health
                                     player["position_x"] = 0.0
@@ -787,6 +809,94 @@ class Server:
             "ownerID": owner_id
         }
         self.broadcast_spawn(eIndex)
+
+    def broadcast_notification(self, message, r, g, b, duration, flash_duration, ignore_queue):
+        # Pack header: packetType, playerIdentification, timestamp
+        packet = struct.pack(
+            NOTIFICATION_FORMAT,
+            PACKET_NOTIFICATION,
+            0,
+            time.time(),
+            message.encode('utf-8')[:63],
+            r, g, b,
+            duration,
+            flash_duration,
+            1 if ignore_queue else 0
+        )
+        for address in self.players:
+            self.serverSocket.sendto(packet, address)
+
+    def update_events(self, current_time):
+        if not self.players or self.start_time is None:
+            return
+        
+        elapsed = current_time - self.start_time
+        
+        # 1. Swarm Event (Every 120s)
+        swarm_cycle_idx = int(elapsed // 120.0)
+        swarm_time_in_cycle = elapsed % 120.0
+        
+        if swarm_time_in_cycle >= 115.0 and self.last_swarm_warning_cycle < swarm_cycle_idx:
+            self.last_swarm_warning_cycle = swarm_cycle_idx
+            self.broadcast_notification("SWARM INCOMING", 255, 255, 0, 5.0, 1.0, True)
+            self.log("Event: Broadcasted Swarm Incoming warning")
+            
+        if swarm_time_in_cycle < 20.0 and swarm_cycle_idx > 0:
+            self.is_swarm_active = True
+        else:
+            self.is_swarm_active = False
+            
+        # 2. Boss Event (Every 210s)
+        boss_cycle_idx = int(elapsed // 210.0)
+        boss_time_in_cycle = elapsed % 210.0
+        
+        if boss_time_in_cycle >= 205.0 and self.last_boss_warning_cycle < boss_cycle_idx:
+            self.last_boss_warning_cycle = boss_cycle_idx
+            self.broadcast_notification("BOSS INCOMING", 255, 0, 0, 5.0, 1.0, True)
+            self.log("Event: Broadcasted Boss Incoming warning")
+            
+        if boss_time_in_cycle < 1.0 and boss_cycle_idx > 0 and self.last_boss_spawn_cycle < boss_cycle_idx:
+            self.last_boss_spawn_cycle = boss_cycle_idx
+            self.spawn_boss()
+
+    def spawn_boss(self):
+        if not self.players:
+            return
+        
+        # Pick a random player to target/spawn around
+        target_player = random.choice(list(self.players.values()))
+        px, py = target_player["position_x"], target_player["position_y"]
+        rx, ry = self.get_random_spawn_position(px, py, 500.0)
+        
+        # Apply progressive difficulty scaling
+        stat_mult = 1.0 + (self.difficulty / 20.0) * 1.25
+        xp_mult = 1.0 + (self.difficulty / 30.0) * 1.25
+        speed_mult = 1.0 + (self.difficulty / 20.0) * 1.05
+        
+        hp = 3000.0 * stat_mult
+        speed = 150.0 * speed_mult
+        xp_value = 1000.0 * xp_mult
+        
+        eIndex = self.nextEntityIndex
+        self.nextEntityIndex += 1
+        if self.nextEntityIndex >= MAX_ENEMIES + MAX_PLAYERS:
+            self.nextEntityIndex = MAX_PLAYERS
+            
+        self.entities[eIndex] = {
+            "type": ENTITY_CHARACTER,
+            "charType": CHARACTER_ENEMY,
+            "position_x": rx,
+            "position_y": ry,
+            "spawnTime": time.time(),
+            "targetPlayerID": target_player["identification"],
+            "health": hp,
+            "max_health": hp,
+            "enemyClass": ENEMY_CLASS_BOSS,
+            "speed": speed,
+            "xp_value": xp_value
+        }
+        self.broadcast_spawn(eIndex)
+        self.log(f"Spawned BOSS at ({rx:.1f}, {ry:.1f}) targeting player {target_player['identification']} (HP: {hp:.1f}, Speed: {speed:.1f})")
 
     def broadcast_damage(self, entityIndex, damage, ownerID):
         packet = struct.pack(ENTITY_DAMAGE_FORMAT, PACKET_ENTITY_DAMAGE, ownerID, time.time(), entityIndex, damage)

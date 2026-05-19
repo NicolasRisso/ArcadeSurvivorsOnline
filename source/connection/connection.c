@@ -70,6 +70,13 @@ bool Network_InitConnection(ConnectionState* connectionState) {
         connectionState->localDamagePopups[i].entityType = ENTITY_UNDEFINED;
     }
 
+    connectionState->notificationCount = 0;
+    for (int i = 0; i < 16; i++) {
+        connectionState->notificationQueue[i].active = false;
+        connectionState->notificationQueue[i].timeElapsed = 0.0f;
+        connectionState->notificationQueue[i].message[0] = '\0';
+    }
+
     // Send identification request
     PacketIDRequest identificationRequest;
     identificationRequest.header.type = PACKET_ID_REQUEST;
@@ -302,6 +309,38 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 u32 playerIndex = (attrUpdate->header.playerIdentification - 1) % MAX_REMOTE_PLAYERS;
                 connectionState->playerAttributes[playerIndex] = attrUpdate->attributes;
                 printf("ATTRIBUTES: Player %u updated attributes.\n", attrUpdate->header.playerIdentification);
+                break;
+            }
+            case PACKET_NOTIFICATION: {
+                PacketNotification* spawn = (PacketNotification*)receiveBuffer;
+                if (spawn->ignoreQueue) {
+                    // Shift existing active/pending notifications back by 1 (capping at 16)
+                    for (int i = 15; i > 0; i--) {
+                        connectionState->notificationQueue[i] = connectionState->notificationQueue[i - 1];
+                    }
+                    strncpy(connectionState->notificationQueue[0].message, spawn->message, 63);
+                    connectionState->notificationQueue[0].message[63] = '\0';
+                    connectionState->notificationQueue[0].color = (Color){spawn->color_r, spawn->color_g, spawn->color_b, 255};
+                    connectionState->notificationQueue[0].duration = spawn->duration;
+                    connectionState->notificationQueue[0].flashDuration = spawn->flashDuration;
+                    connectionState->notificationQueue[0].timeElapsed = 0.0f;
+                    connectionState->notificationQueue[0].active = true;
+                    if (connectionState->notificationCount < 16) {
+                        connectionState->notificationCount++;
+                    }
+                } else {
+                    if (connectionState->notificationCount < 16) {
+                        int idx = connectionState->notificationCount;
+                        strncpy(connectionState->notificationQueue[idx].message, spawn->message, 63);
+                        connectionState->notificationQueue[idx].message[63] = '\0';
+                        connectionState->notificationQueue[idx].color = (Color){spawn->color_r, spawn->color_g, spawn->color_b, 255};
+                        connectionState->notificationQueue[idx].duration = spawn->duration;
+                        connectionState->notificationQueue[idx].flashDuration = spawn->flashDuration;
+                        connectionState->notificationQueue[idx].timeElapsed = 0.0f;
+                        connectionState->notificationQueue[idx].active = true;
+                        connectionState->notificationCount++;
+                    }
+                }
                 break;
             }
         }

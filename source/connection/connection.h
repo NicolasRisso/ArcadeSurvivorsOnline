@@ -27,7 +27,8 @@ typedef enum {
     PACKET_PROJECTILE_EXPLODE = 12,
     PACKET_DAMAGE_BATCH = 13,
     PACKET_XP_COLLECT = 14,
-    PACKET_ATTRIBUTE_UPDATE = 15
+    PACKET_ATTRIBUTE_UPDATE = 15,
+    PACKET_NOTIFICATION = 16
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
@@ -148,7 +149,27 @@ typedef struct {
     PlayerAttributes attributes;
 } PacketAttributeUpdate;
 
+typedef struct {
+    PacketHeader header;
+    char message[64];
+    u8 color_r;
+    u8 color_g;
+    u8 color_b;
+    f32 duration;
+    f32 flashDuration;
+    u8 ignoreQueue;
+} PacketNotification;
+
 #pragma pack(pop)
+
+typedef struct {
+    char message[64];
+    Color color;
+    f32 duration;
+    f32 flashDuration;
+    f32 timeElapsed;
+    bool active;
+} ClientNotification;
 
 typedef struct ConnectionState {
     u32 localPlayerIdentification;
@@ -175,6 +196,9 @@ typedef struct ConnectionState {
     
     VisualEffect localVisualEffects[128];
     Entity localDamagePopups[256];
+
+    ClientNotification notificationQueue[16];
+    i32 notificationCount;
 } ConnectionState;
 
 bool Network_InitConnection(ConnectionState* state);

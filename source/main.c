@@ -65,6 +65,22 @@ int main(void) {
             gameTime = 0.0f;
         }
 
+        // Update active notification
+        if (currentConnectionState.notificationCount > 0) {
+            ClientNotification* activeNotif = &currentConnectionState.notificationQueue[0];
+            activeNotif->timeElapsed += deltaTime;
+            if (activeNotif->timeElapsed >= activeNotif->duration) {
+                // Shift notifications queue forward
+                for (int i = 0; i < currentConnectionState.notificationCount - 1; i++) {
+                    currentConnectionState.notificationQueue[i] = currentConnectionState.notificationQueue[i + 1];
+                }
+                currentConnectionState.notificationCount--;
+                if (currentConnectionState.notificationCount > 0) {
+                    currentConnectionState.notificationQueue[0].timeElapsed = 0.0f;
+                }
+            }
+        }
+
         // Predict and Interpolate movement and count down visual timers for characters
         for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
             Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
@@ -252,6 +268,30 @@ int main(void) {
             if (isChoosingUpgrade) DrawUpgradeCards();
             if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
             DrawFPS(10, 10);
+
+            // Draw active notification
+            if (currentConnectionState.notificationCount > 0) {
+                ClientNotification* activeNotif = &currentConnectionState.notificationQueue[0];
+                f32 flashSpeed = activeNotif->flashDuration;
+                f32 alpha = 1.0f;
+                if (flashSpeed > 0.001f) {
+                    f32 progress = activeNotif->timeElapsed / flashSpeed;
+                    f32 angle = progress * 2.0f * 3.14159265f - (3.14159265f / 2.0f);
+                    alpha = 0.5f + 0.5f * sinf(angle);
+                }
+                
+                int fontSize = 36;
+                int textWidth = MeasureText(activeNotif->message, fontSize);
+                int posX = (SCREEN_WIDTH - textWidth) / 2;
+                int posY = 150;
+                
+                // Draw a subtle elegant semi-transparent black banner across the screen
+                DrawRectangle(0, posY - 10, SCREEN_WIDTH, fontSize + 20, Fade(BLACK, alpha * 0.4f));
+                
+                // Draw premium text with drop shadow
+                DrawText(activeNotif->message, posX + 2, posY + 2, fontSize, Fade(BLACK, alpha * 0.6f));
+                DrawText(activeNotif->message, posX, posY, fontSize, Fade(activeNotif->color, alpha));
+            }
             if (!currentConnectionState.isConnected) {
                 DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
                 DrawText("CONNECTING TO SERVER...", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, WHITE);
@@ -658,7 +698,12 @@ void Player_UpdateMovement(f32 deltaTime) {
                 if (CheckCollisionCircles(currentConnectionState.localPosition, PLAYER_RADIUS, enemy->character.position, PLAYER_RADIUS)) {
                     f32 clientDifficulty = gameTime / 6.0f;
                     f32 stat_mult = 1.0f + (clientDifficulty / 20.0f) * 1.25f;
-                    f32 predictedDamage = 10.0f * stat_mult;
+                    
+                    f32 baseDamage = 10.0f;
+                    if (enemy->character.enemyClass == ENEMY_CLASS_BOSS) {
+                        baseDamage = 40.0f;
+                    }
+                    f32 predictedDamage = baseDamage * stat_mult;
                     
                     currentConnectionState.health -= predictedDamage;
                     currentConnectionState.iframeTimer = 0.5f;
@@ -818,6 +863,11 @@ void Render_Entity(const Entity* entity) {
                     baseColor = DARKPURPLE;
                     labelText = "TANK";
                     barWidth = 60;
+                } else if (entity->character.enemyClass == ENEMY_CLASS_BOSS) {
+                    radius = PLAYER_RADIUS * 2.5f;
+                    baseColor = MAROON;
+                    labelText = "BOSS";
+                    barWidth = 100;
                 }
                 
                 DrawCircleV(entity->character.position, radius, baseColor);

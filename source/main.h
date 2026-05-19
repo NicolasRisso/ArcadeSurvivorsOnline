@@ -100,7 +100,8 @@ typedef enum CharacterType : u8 {
 typedef enum EnemyClass : u8 {
     ENEMY_CLASS_NORMAL = 0,
     ENEMY_CLASS_FAST = 1,
-    ENEMY_CLASS_TANK = 2
+    ENEMY_CLASS_TANK = 2,
+    ENEMY_CLASS_BOSS = 3
 } EnemyClass;
 
 typedef enum RelicType : u8 {
