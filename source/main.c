@@ -876,6 +876,13 @@ void Player_UpdateMovement(f32 deltaTime) {
     currentConnectionState.localPosition.x += movementVelocity.x * deltaTime;
     currentConnectionState.localPosition.y += movementVelocity.y * deltaTime;
     
+    // Cap player position within map boundaries (including player radius)
+    float mapLimit = MAP_SIZE / 2.0f - PLAYER_RADIUS;
+    if (currentConnectionState.localPosition.x < -mapLimit) currentConnectionState.localPosition.x = -mapLimit;
+    if (currentConnectionState.localPosition.x > mapLimit) currentConnectionState.localPosition.x = mapLimit;
+    if (currentConnectionState.localPosition.y < -mapLimit) currentConnectionState.localPosition.y = -mapLimit;
+    if (currentConnectionState.localPosition.y > mapLimit) currentConnectionState.localPosition.y = mapLimit;
+    
     // Local player-enemy collision damage prediction
     if (currentConnectionState.iframeTimer <= 0) {
         for (i32 enemyIndex = 0; enemyIndex < MAX_REMOTE_ENTITIES; enemyIndex++) {

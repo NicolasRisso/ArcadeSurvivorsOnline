@@ -245,6 +245,11 @@ class Server:
             else:
                 player["position_x"] += player["velocity_x"] * delta_time
                 player["position_y"] += player["velocity_y"] * delta_time
+                
+                # Cap player position within map boundaries (including player radius 20.0)
+                map_limit = 5000.0 - 20.0
+                player["position_x"] = max(-map_limit, min(map_limit, player["position_x"]))
+                player["position_y"] = max(-map_limit, min(map_limit, player["position_y"]))
 
         # Update enemies
         for index, entity in list(self.entities.items()):
@@ -541,6 +546,11 @@ class Server:
                         player["velocity_x"] = 0.0
                         player["velocity_y"] = 0.0
                         return
+                    
+                    # Cap player position within map boundaries (including player radius 20.0)
+                    map_limit = 5000.0 - 20.0
+                    posX = max(-map_limit, min(map_limit, posX))
+                    posY = max(-map_limit, min(map_limit, posY))
                     
                     # Verify player movement: check distance between client position and server prediction
                     dx = posX - player["position_x"]
