@@ -343,6 +343,65 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 }
                 break;
             }
+            case PACKET_UPGRADE_UPDATE: {
+                PacketUpgradeUpdate* update = (PacketUpgradeUpdate*)receiveBuffer;
+                
+                if (update->header.playerIdentification == connectionState->localPlayerIdentification) {
+                    // SERVER AUTHORITATIVE CORRECTION / ACKNOWLEDGMENT FOR LOCAL PLAYER
+                    bool changed = false;
+                    if (update->isRelic) {
+                        for (int i = 0; i < 4; i++) {
+                            if (globalVariables.playerRelics[i].type == update->type) {
+                                if (globalVariables.playerRelics[i].level != update->level) {
+                                    globalVariables.playerRelics[i].level = update->level;
+                                    changed = true;
+                                }
+                                break;
+                            }
+                        }
+                        if (changed) Player_RecalculateAttributes();
+                    } else {
+                        for (int i = 0; i < 4; i++) {
+                            if (globalVariables.playerWeapons[i].type == update->type) {
+                                if (globalVariables.playerWeapons[i].level != update->level) {
+                                    globalVariables.playerWeapons[i].level = update->level;
+                                    // Recalculate weapon stats
+                                    Weapon_Initialize(&globalVariables.playerWeapons[i], update->type);
+                                    for (int l = 1; l < update->level; l++) {
+                                        Weapon_Upgrade(&globalVariables.playerWeapons[i]);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                
+                // REMOTE PLAYERS UPDATE
+                u32 entityIndex = update->header.playerIdentification % MAX_REMOTE_ENTITIES;
+                u32 remoteIndex = (update->header.playerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                
+                if (update->isRelic) {
+                    if (update->type >= 1 && update->type <= 7) {
+                        connectionState->remoteEntities[entityIndex].character.relicLevels[update->type - 1] = update->level;
+                        connectionState->playerAttributes[remoteIndex] = RecalculateAttributesFromRelics(connectionState->remoteEntities[entityIndex].character.relicLevels);
+                    }
+                } else {
+                    if (update->type >= 1 && update->type <= 5) {
+                        connectionState->remoteEntities[entityIndex].character.weaponLevels[update->type - 1] = update->level;
+                        // Update weapons mask
+                        u8 mask = 0;
+                        for (int w = 0; w < 5; w++) {
+                            if (connectionState->remoteEntities[entityIndex].character.weaponLevels[w] > 0) {
+                                mask |= (1 << w);
+                            }
+                        }
+                        connectionState->remoteEntities[entityIndex].character.weaponsMask = mask;
+                    }
+                }
+                break;
+            }
         }
     }
 
@@ -508,6 +567,64 @@ void Network_SendAttributeUpdate(ConnectionState* state, PlayerAttributes attr) 
     packet.attributes = attr;
 
     sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+}
+
+void Network_SendUpgradeUpdate(ConnectionState* state, u8 isRelic, u8 type, u8 level) {
+    if (!state->isConnected) return;
+
+    PacketUpgradeUpdate packet;
+    packet.header.type = PACKET_UPGRADE_UPDATE;
+    packet.header.playerIdentification = state->localPlayerIdentification;
+    packet.header.timestamp = GetTime();
+    packet.isRelic = isRelic;
+    packet.type = type;
+    packet.level = level;
+
+    sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+}
+
+PlayerAttributes RecalculateAttributesFromRelics(const u8 relicLevels[7]) {
+    PlayerAttributes attr = {
+        .maxHealth = DEFAULT_MAX_HEALTH,
+        .damage = DEFAULT_DAMAGE,
+        .attackSpeed = DEFAULT_ATTACK_SPEED,
+        .movementSpeed = DEFAULT_MOVEMENT_SPEED,
+        .size = DEFAULT_SIZE,
+        .xpGained = DEFAULT_XP_GAINED,
+        .lifeSteal = DEFAULT_LIFESTEAL
+    };
+
+    for (int rType = 1; rType <= 7; rType++) {
+        u8 lvl = relicLevels[rType - 1];
+        if (lvl == 0) continue;
+
+        switch (rType) {
+            case RELIC_HEALTH:
+                attr.maxHealth += DEFAULT_MAX_HEALTH * RELIC_LEVELUP_HEALTH * lvl;
+                break;
+            case RELIC_DAMAGE:
+                attr.damage += RELIC_LEVELUP_DAMAGE * lvl;
+                break;
+            case RELIC_ATTACK_SPEED:
+                attr.attackSpeed += RELIC_LEVELUP_ATTACKSPEED * lvl;
+                break;
+            case RELIC_SIZE:
+                attr.size += RELIC_LEVELUP_SIZE * lvl;
+                break;
+            case RELIC_MOVEMENT_SPEED:
+                attr.movementSpeed += RELIC_LEVELUP_MOVEMENTSPEED * lvl;
+                break;
+            case RELIC_XP_GAIN:
+                attr.xpGained += RELIC_LEVELUP_XPGAIN * lvl;
+                break;
+            case RELIC_LIFE_STEAL:
+                attr.lifeSteal += RELIC_LEVELUP_LIFESTEAL * lvl;
+                break;
+            default:
+                break;
+        }
+    }
+    return attr;
 }
 
 

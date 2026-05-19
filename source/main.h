@@ -134,6 +134,8 @@ typedef struct Character{
     f32 health;
     f32 maxHealth;
     u8 weaponsMask;
+    u8 weaponLevels[5];
+    u8 relicLevels[7];
     f32 damageFlashTimer;
     EnemyClass enemyClass;
 } Character;
@@ -237,6 +239,8 @@ void Enemy_UpdateMovement(f32 deltaTime);
 void Weapons_Update(f32 deltaTime);
 void Projectile_UpdateMovement(f32 deltaTime);
 void Weapon_FireFireballRing(Vector2 position, u32 ownerID);
+void Weapon_Initialize(Weapon* w, WeaponType type);
+void Weapon_Upgrade(Weapon* w);
 //~ End of Weapons
 
 //~ Begin of Player

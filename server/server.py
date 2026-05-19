@@ -35,6 +35,7 @@ PACKET_DAMAGE_BATCH = 13
 PACKET_XP_COLLECT = 14
 PACKET_ATTRIBUTE_UPDATE = 15
 PACKET_NOTIFICATION = 16
+PACKET_UPGRADE_UPDATE = 17
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
@@ -133,6 +134,7 @@ DAMAGE_ENTRY_FORMAT = "If"
 XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
 ATTRIBUTE_UPDATE_FORMAT = HEADER_FORMAT + "fffffff"
 NOTIFICATION_FORMAT = HEADER_FORMAT + "64sBBBffB"
+UPGRADE_UPDATE_FORMAT = HEADER_FORMAT + "BBB"
 
 class Server:
     def __init__(self):
@@ -488,6 +490,8 @@ class Server:
                     "velocity_y": 0.0,
                     "lastHeartbeatReceived": time.time(),
                     "weapons_mask": 0,
+                    "weapon_levels": [0, 0, 0, 0, 0],
+                    "relic_levels": [0, 0, 0, 0, 0, 0, 0],
                     "attributes": (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0),
                     "health": 100.0,
                     "iframe_until": 0.0
@@ -758,6 +762,51 @@ class Server:
                     # Broadcast to others
                     self.broadcast_attribute_update(playerIdentification, attributes)
 
+        elif packetType == PACKET_UPGRADE_UPDATE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(UPGRADE_UPDATE_FORMAT):
+                    _, _, _, is_relic, upgrade_type, level = struct.unpack(UPGRADE_UPDATE_FORMAT, data[:struct.calcsize(UPGRADE_UPDATE_FORMAT)])
+                    player = self.players[address]
+                    
+                    is_valid = True
+                    # Validate upgrade parameters
+                    if is_relic:
+                        if upgrade_type < 1 or upgrade_type > 7 or level < 0 or level > 15:
+                            is_valid = False
+                    else:
+                        if upgrade_type < 1 or upgrade_type > 5 or level < 0 or level > 15:
+                            is_valid = False
+                            
+                    current_level = 0
+                    if is_valid:
+                        current_level = player["relic_levels"][upgrade_type - 1] if is_relic else player["weapon_levels"][upgrade_type - 1]
+                        # Sequential check: must be level + 1, or level 1 if unowned
+                        if level != current_level + 1:
+                            if not (current_level == 0 and level == 1):
+                                is_valid = False
+                                
+                    if is_valid:
+                        if is_relic:
+                            player["relic_levels"][upgrade_type - 1] = level
+                        else:
+                            player["weapon_levels"][upgrade_type - 1] = level
+                            
+                        # Recalculate weapons mask
+                        mask = 0
+                        for i, lvl in enumerate(player["weapon_levels"]):
+                            if lvl > 0:
+                                mask |= (1 << i)
+                        player["weapons_mask"] = mask
+                        
+                        print(f"Player {playerIdentification} upgraded {'Relic' if is_relic else 'Weapon'} {upgrade_type} to level {level}")
+                        
+                        # Broadcast confirmation to everyone
+                        self.broadcast_upgrade_update(playerIdentification, is_relic, upgrade_type, level)
+                    else:
+                        print(f"Player {playerIdentification} attempted invalid upgrade: {'Relic' if is_relic else 'Weapon'} {upgrade_type} to level {level} (current: {current_level})")
+                        # Send correction back to sender
+                        self.send_upgrade_correction(address, playerIdentification, is_relic, upgrade_type, current_level)
+
         elif packetType == PACKET_XP_COLLECT:
             if address in self.players:
                 if len(data) >= struct.calcsize(XP_COLLECT_FORMAT):
@@ -931,6 +980,15 @@ class Server:
         packet = struct.pack(ATTRIBUTE_UPDATE_FORMAT, PACKET_ATTRIBUTE_UPDATE, playerIdentification, time.time(), *attributes)
         for address in self.players:
             self.serverSocket.sendto(packet, address)
+
+    def broadcast_upgrade_update(self, playerIdentification, is_relic, upgrade_type, level):
+        packet = struct.pack(UPGRADE_UPDATE_FORMAT, PACKET_UPGRADE_UPDATE, playerIdentification, time.time(), is_relic, upgrade_type, level)
+        for address in self.players:
+            self.serverSocket.sendto(packet, address)
+
+    def send_upgrade_correction(self, address, playerIdentification, is_relic, upgrade_type, level):
+        packet = struct.pack(UPGRADE_UPDATE_FORMAT, PACKET_UPGRADE_UPDATE, playerIdentification, time.time(), is_relic, upgrade_type, level)
+        self.serverSocket.sendto(packet, address)
 
     def spawn_xp_crystal(self, x, y, value=20.0):
         # 1. Try to find a free slot in the XP range

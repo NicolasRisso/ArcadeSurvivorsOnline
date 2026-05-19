@@ -233,7 +233,12 @@ int main(void) {
                             u32 remoteID = entityIndex;
                             u32 remoteIndex = (remoteID - 1) % MAX_REMOTE_PLAYERS;
                             f32 remoteSizeMult = currentConnectionState.playerAttributes[remoteIndex].size;
-                            f32 currentAuraRadius = AURA_RADIUS * remoteSizeMult;
+                            u8 auraLevel = entity->character.weaponLevels[WEAPON_DEATH_AURA - 1];
+                            f32 baseAuraRadius = AURA_RADIUS;
+                            if (auraLevel > 1) {
+                                baseAuraRadius += 15.0f * (auraLevel - 1);
+                            }
+                            f32 currentAuraRadius = baseAuraRadius * remoteSizeMult;
                             DrawCircleLinesV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.3f));
                             DrawCircleV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.1f));
                         }
@@ -727,16 +732,15 @@ void Player_UpdateMovement(f32 deltaTime) {
 }
 
 void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr) {
-    if (!state->isConnected) return;
-    
-    u32 localIndex = (state->localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    u32 localIndex = 0;
+    if (state->isConnected) {
+        localIndex = (state->localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+    }
     state->playerAttributes[localIndex] = attr;
     
     // Update local health values based on attribute change
     state->maxHealth = attr.maxHealth;
     if (state->health > state->maxHealth) state->health = state->maxHealth;
-    
-    Network_SendAttributeUpdate(state, attr);
 }
 
 void Player_RecalculateAttributes(void) {
@@ -1150,26 +1154,31 @@ void ApplyUpgrade(int optionIndex) {
     LevelUpOption option = upgradeOptions[optionIndex];
     if (option.type == 0) return;
 
+    u8 newLevel = 0;
     if (option.isRelic) {
         RelicType type = (RelicType)option.type;
         // Check if we already have it
         for (int i = 0; i < 4; i++) {
             if (globalVariables.playerRelics[i].type == type) {
-                if (globalVariables.playerRelics[i].level < 5) {
+                if (globalVariables.playerRelics[i].level < 15) {
                     globalVariables.playerRelics[i].level++;
+                    newLevel = globalVariables.playerRelics[i].level;
                     Player_RecalculateAttributes();
                 }
-                return;
+                break;
             }
         }
         
-        // Find empty slot
-        for (int i = 0; i < 4; i++) {
-            if (globalVariables.playerRelics[i].type == RELIC_UNDEFINED) {
-                globalVariables.playerRelics[i].type = type;
-                globalVariables.playerRelics[i].level = 1;
-                Player_RecalculateAttributes();
-                return;
+        if (newLevel == 0) {
+            // Find empty slot
+            for (int i = 0; i < 4; i++) {
+                if (globalVariables.playerRelics[i].type == RELIC_UNDEFINED) {
+                    globalVariables.playerRelics[i].type = type;
+                    globalVariables.playerRelics[i].level = 1;
+                    newLevel = 1;
+                    Player_RecalculateAttributes();
+                    break;
+                }
             }
         }
     } else {
@@ -1178,17 +1187,25 @@ void ApplyUpgrade(int optionIndex) {
         for (int i = 0; i < 4; i++) {
             if (globalVariables.playerWeapons[i].type == type) {
                 Weapon_Upgrade(&globalVariables.playerWeapons[i]);
-                return;
+                newLevel = globalVariables.playerWeapons[i].level;
+                break;
             }
         }
         
-        // Find empty slot
-        for (int i = 0; i < 4; i++) {
-            if (globalVariables.playerWeapons[i].type == WEAPON_UNDEFINED) {
-                Weapon_Initialize(&globalVariables.playerWeapons[i], type);
-                return;
+        if (newLevel == 0) {
+            // Find empty slot
+            for (int i = 0; i < 4; i++) {
+                if (globalVariables.playerWeapons[i].type == WEAPON_UNDEFINED) {
+                    Weapon_Initialize(&globalVariables.playerWeapons[i], type);
+                    newLevel = 1;
+                    break;
+                }
             }
         }
+    }
+
+    if (newLevel > 0) {
+        Network_SendUpgradeUpdate(&currentConnectionState, option.isRelic, option.type, newLevel);
     }
 }
 

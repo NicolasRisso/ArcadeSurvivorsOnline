@@ -28,7 +28,8 @@ typedef enum {
     PACKET_DAMAGE_BATCH = 13,
     PACKET_XP_COLLECT = 14,
     PACKET_ATTRIBUTE_UPDATE = 15,
-    PACKET_NOTIFICATION = 16
+    PACKET_NOTIFICATION = 16,
+    PACKET_UPGRADE_UPDATE = 17
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
@@ -160,6 +161,13 @@ typedef struct {
     u8 ignoreQueue;
 } PacketNotification;
 
+typedef struct {
+    PacketHeader header;
+    u8 isRelic;
+    u8 type;
+    u8 level;
+} PacketUpgradeUpdate;
+
 #pragma pack(pop)
 
 typedef struct {
@@ -211,8 +219,10 @@ void Network_SendDamageBatch(ConnectionState* state);
 void Network_SendXPCollect(ConnectionState* state, u32 crystalIndex);
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex);
 void Network_SendAttributeUpdate(ConnectionState* state, PlayerAttributes attr);
+void Network_SendUpgradeUpdate(ConnectionState* state, u8 isRelic, u8 type, u8 level);
 void Network_QueueDeath(ConnectionState* state, u32 enemyID);
 void Network_CloseConnection();
+PlayerAttributes RecalculateAttributesFromRelics(const u8 relicLevels[7]);
 
 static inline bool Network_IsConnected(ConnectionState* state) {
     if(state) return state->isConnected;
