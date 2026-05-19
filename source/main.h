@@ -260,7 +260,7 @@ struct ConnectionState;
 typedef struct ConnectionState ConnectionState;
 void Player_UpdateMovement(f32 deltaTime);
 void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr);
-void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE);
+void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE, f32 weaponMult);
 void Player_RecalculateAttributes(void);
 void DrawStatsOverlay(void);
 //~ End of Player

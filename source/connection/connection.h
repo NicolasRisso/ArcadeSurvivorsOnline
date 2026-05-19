@@ -134,6 +134,7 @@ typedef struct {
 typedef struct {
     u32 entityIndex;
     f32 damage;
+    u8 weaponType;
 } DamageEntry;
 
 typedef struct {
@@ -218,7 +219,7 @@ void Network_UpdateConnection(ConnectionState* state);
 void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
 void Network_SendDeathReport(ConnectionState* state);
 void Network_SendWeaponFire(ConnectionState* state, u8 weaponType, f32 damage, f32 radius, i32 extraParam);
-void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage);
+void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage, u8 weaponType);
 void Network_SendDamageBatch(ConnectionState* state);
 void Network_SendXPCollect(ConnectionState* state, u32 crystalIndex);
 void Network_SendProjectileExplode(ConnectionState* state, u32 projectileIndex);

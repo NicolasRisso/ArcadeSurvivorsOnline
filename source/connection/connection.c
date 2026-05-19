@@ -515,10 +515,11 @@ void Network_SendWeaponFire(ConnectionState* state, u8 weaponType, f32 damage, f
     sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
 }
 
-void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage) {
+void Network_SendDamage(ConnectionState* state, u32 entityIndex, f32 damage, u8 weaponType) {
     if (state->pendingDamageCount < 512) {
         state->pendingDamage[state->pendingDamageCount].entityIndex = entityIndex;
         state->pendingDamage[state->pendingDamageCount].damage = damage;
+        state->pendingDamage[state->pendingDamageCount].weaponType = weaponType;
         state->pendingDamageCount++;
     }
 }

@@ -130,7 +130,7 @@ WEAPON_FIRE_FORMAT = HEADER_FORMAT + "Bffi"
 ENTITY_DAMAGE_FORMAT = HEADER_FORMAT + "If"
 PACKET_PROJECTILE_EXPLODE_FORMAT = HEADER_FORMAT + "I"
 DAMAGE_BATCH_HEADER_FORMAT = HEADER_FORMAT + "I"
-DAMAGE_ENTRY_FORMAT = "If"
+DAMAGE_ENTRY_FORMAT = "IfB"
 XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
 ATTRIBUTE_UPDATE_FORMAT = HEADER_FORMAT + "fffffff"
 NOTIFICATION_FORMAT = HEADER_FORMAT + "64sBBBffB"
@@ -590,7 +590,7 @@ class Server:
                     for i in range(count):
                         start = header_size + (i * entry_size)
                         if start + entry_size > len(data): break
-                        eIndex, damage = struct.unpack("<" + DAMAGE_ENTRY_FORMAT, data[start:start+entry_size])
+                        eIndex, damage, weaponType = struct.unpack("<" + DAMAGE_ENTRY_FORMAT, data[start:start+entry_size])
                         
                         # Check if eIndex belongs to a player
                         target_player = None
@@ -632,7 +632,32 @@ class Server:
                         elif eIndex in self.entities:
                             entity = self.entities[eIndex]
                             if entity["type"] == ENTITY_CHARACTER and entity["charType"] == CHARACTER_ENEMY:
+                                # Authoritative Lifesteal!
+                                # Cap damage by enemy health to get actual damage dealt
+                                actual_damage = damage
+                                enemy_health_before = entity["health"]
+                                if actual_damage > enemy_health_before:
+                                    actual_damage = enemy_health_before
+                                
                                 entity["health"] -= damage
+                                
+                                # Apply lifesteal healing to the attacker
+                                player_lifesteal = player.get("attributes", (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0))[6]
+                                if player_lifesteal > 0.0 and actual_damage > 0.0:
+                                    if 1 <= weaponType <= 5:
+                                        has_weapon = (player.get("weapons_mask", 0) & (1 << (weaponType - 1))) != 0
+                                        if player.get("weapon_levels", [0,0,0,0,0])[weaponType - 1] > 0 or has_weapon:
+                                            multipliers = {
+                                                1: 1.0 * 0.40, # Fireball (AoE)
+                                                2: 1.0 * 1.00, # Crystal Staff (Single)
+                                                3: 0.5 * 0.40, # Death Aura (AoE)
+                                                4: 0.5 * 0.40, # Bomb Shoes (AoE)
+                                                5: 1.0 * 0.40  # Nature Spikes (AoE)
+                                            }
+                                            healing = actual_damage * player_lifesteal * multipliers.get(weaponType, 0.0)
+                                            max_health = player.get("attributes", (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0))[0]
+                                            player["health"] = min(max_health, player["health"] + healing)
+                                
                                 if entity["health"] <= 0:
                                     xp_val = entity.get("xp_value", 20.0)
                                     ex, ey = entity["position_x"], entity["position_y"]
