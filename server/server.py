@@ -581,9 +581,10 @@ class Server:
                     for eIndex in ids:
                         if eIndex in self.entities:
                             # Verify it's an enemy (security)
-                            if self.entities[eIndex]["charType"] == CHARACTER_ENEMY:
-                                xp_val = self.entities[eIndex].get("xp_value", 20.0)
-                                ex, ey = self.entities[eIndex]["position_x"], self.entities[eIndex]["position_y"]
+                            entity = self.entities[eIndex]
+                            if entity.get("type") == ENTITY_CHARACTER and entity.get("charType") == CHARACTER_ENEMY:
+                                xp_val = entity.get("xp_value", 20.0)
+                                ex, ey = entity["position_x"], entity["position_y"]
                                 del self.entities[eIndex]
                                 self.broadcast_despawn(eIndex)
                                 self.spawn_xp_crystal(ex, ey, xp_val)
@@ -704,7 +705,7 @@ class Server:
                         closest_enemy = None
                         min_dist = float("inf")
                         for ent in self.entities.values():
-                            if ent["type"] == ENTITY_CHARACTER and ent["charType"] == CHARACTER_ENEMY:
+                            if ent["type"] == ENTITY_CHARACTER and ent["charType"] == CHARACTER_ENEMY and ent.get("health", 0.0) > 0.0:
                                 dx = ent["position_x"] - px
                                 dy = ent["position_y"] - py
                                 dist = math.sqrt(dx*dx + dy*dy)
@@ -1175,7 +1176,7 @@ class Server:
         positions = []
         for i in range(first_index, last_index):
             entity = self.entities.get(i)
-            if entity and entity["charType"] == CHARACTER_ENEMY:
+            if entity and entity.get("type") == ENTITY_CHARACTER and entity.get("charType") == CHARACTER_ENEMY:
                 positions.append((entity["position_x"], entity["position_y"]))
             else:
                 # If no enemy, we send (0,0) as a placeholder to keep sequence aligned
