@@ -322,7 +322,14 @@ int main(void) {
                             if (globalVariables.currentConnectionState.damageFlashTimer > 0) {
                                 f32 flashAlpha = (sinf(globalVariables.currentConnectionState.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
                                 if (flashAlpha > 0.0f) {
-                                    DrawCircleV(globalVariables.currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                                    if (globalVariables.assets.loaded && globalVariables.assets.spriteAtlas.id > 0) {
+                                        BeginShaderMode(globalVariables.assets.whiteShader);
+                                        Render_SpriteTinted(SPRITE_PLAYER_IDLE, globalVariables.currentConnectionState.localPosition,
+                                                            48.0f, flipX, isMoving ? GetTime() : 0.0f, Fade(WHITE, flashAlpha));
+                                        EndShaderMode();
+                                    } else {
+                                        DrawCircleV(globalVariables.currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                                    }
                                 }
                             }
                             
@@ -658,12 +665,20 @@ void Assets_Load(void) {
         "}\n";
         
     globalVariables.assets.whiteShader = LoadShaderFromMemory(NULL, fragmentShaderCode);
+    
+    // Load map textures
+    globalVariables.assets.cobblestone = LoadTexture("assets/map/CobblestoneTexture.png");
+    globalVariables.assets.brick = LoadTexture("assets/map/BrickTexture.png");
+    if (globalVariables.assets.cobblestone.id > 0) SetTextureWrap(globalVariables.assets.cobblestone, TEXTURE_WRAP_REPEAT);
+    if (globalVariables.assets.brick.id > 0) SetTextureWrap(globalVariables.assets.brick, TEXTURE_WRAP_REPEAT);
 }
 
 void Assets_Unload(void) {
     if (globalVariables.assets.loaded) {
         UnloadTexture(globalVariables.assets.logoAtlas);
         UnloadTexture(globalVariables.assets.spriteAtlas);
+        UnloadTexture(globalVariables.assets.cobblestone);
+        UnloadTexture(globalVariables.assets.brick);
         
         //~ Begin Audio Unloading
         UnloadMusicStream(globalVariables.assets.musicTracks[MUSIC_INGAME]);
@@ -1959,7 +1974,6 @@ void Render_Entity(const Entity* entity) {
                 EnemyClassRenderProps props = ENEMY_CLASS_RENDER_PROPS[entity->character.enemyClass];
                 f32 radius = PLAYER_RADIUS * props.radiusMultiplier;
                 Color baseColor = props.baseColor;
-                const char* labelText = props.labelText;
                 i32 barWidth = props.barWidth;
                 
                 // Draw enemy sprite (or circle fallback), flipped toward target
@@ -1975,7 +1989,6 @@ void Render_Entity(const Entity* entity) {
                     if (hpPercent > 1.0f) hpPercent = 1.0f;
                     DrawRectangle(entity->character.position.x - barWidth / 2, barY, barWidth, 5, DARKGRAY);
                     DrawRectangle(entity->character.position.x - barWidth / 2, barY, (int)(barWidth * hpPercent), 5, GREEN);
-                    DrawText(labelText, entity->character.position.x - barWidth / 2, barY - 15, 10, baseColor);
                 } else {
                     DrawCircleV(entity->character.position, radius, baseColor);
                     // HP Bar
@@ -1984,7 +1997,6 @@ void Render_Entity(const Entity* entity) {
                     if (hpPercent > 1.0f) hpPercent = 1.0f;
                     DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, barWidth, 5, DARKGRAY);
                     DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, (int)(barWidth * hpPercent), 5, GREEN);
-                    DrawText(labelText, entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 25, 10, baseColor);
                 }
                 
                 // Draw enemy smooth ease-in/ease-out damage flash if timer is active
@@ -2069,10 +2081,41 @@ void Render_Entity(const Entity* entity) {
 }
 
 void Render_Map(void) {
-    DrawRectangle(-MAP_SIZE/2, -MAP_SIZE/2, MAP_SIZE, MAP_SIZE, BEIGE);
-    for (i32 gridIndex = -MAP_SIZE/2; gridIndex <= MAP_SIZE/2; gridIndex += 250) {
-        DrawLine(gridIndex, -MAP_SIZE/2, gridIndex, MAP_SIZE/2, LIGHTGRAY);
-        DrawLine(-MAP_SIZE/2, gridIndex, MAP_SIZE/2, gridIndex, LIGHTGRAY);
+    if (globalVariables.assets.loaded && globalVariables.assets.cobblestone.id > 0 && globalVariables.assets.brick.id > 0) {
+        // 1. Draw tiled cobblestone playable area
+        Rectangle cobbleDest = { -MAP_SIZE / 2.0f, -MAP_SIZE / 2.0f, MAP_SIZE, MAP_SIZE };
+        Rectangle cobbleSrc = { 0.0f, 0.0f, MAP_SIZE, MAP_SIZE };
+        DrawTexturePro(globalVariables.assets.cobblestone, cobbleSrc, cobbleDest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+        
+        // 2. Draw tiled brick borders (unaccessible areas)
+        f32 borderThickness = 1024.0f; // Sufficiently thick to cover the screen bounds outside MAP_SIZE
+        
+        // Top border
+        Rectangle topDest = { -MAP_SIZE / 2.0f - borderThickness, -MAP_SIZE / 2.0f - borderThickness, MAP_SIZE + borderThickness * 2.0f, borderThickness };
+        Rectangle topSrc = { 0.0f, 0.0f, MAP_SIZE + borderThickness * 2.0f, borderThickness };
+        DrawTexturePro(globalVariables.assets.brick, topSrc, topDest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+        
+        // Bottom border
+        Rectangle bottomDest = { -MAP_SIZE / 2.0f - borderThickness, MAP_SIZE / 2.0f, MAP_SIZE + borderThickness * 2.0f, borderThickness };
+        Rectangle bottomSrc = { 0.0f, 0.0f, MAP_SIZE + borderThickness * 2.0f, borderThickness };
+        DrawTexturePro(globalVariables.assets.brick, bottomSrc, bottomDest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+        
+        // Left border
+        Rectangle leftDest = { -MAP_SIZE / 2.0f - borderThickness, -MAP_SIZE / 2.0f, borderThickness, MAP_SIZE };
+        Rectangle leftSrc = { 0.0f, 0.0f, borderThickness, MAP_SIZE };
+        DrawTexturePro(globalVariables.assets.brick, leftSrc, leftDest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+        
+        // Right border
+        Rectangle rightDest = { MAP_SIZE / 2.0f, -MAP_SIZE / 2.0f, borderThickness, MAP_SIZE };
+        Rectangle rightSrc = { 0.0f, 0.0f, borderThickness, MAP_SIZE };
+        DrawTexturePro(globalVariables.assets.brick, rightSrc, rightDest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+    } else {
+        // Fallback grid rendering
+        DrawRectangle(-MAP_SIZE/2, -MAP_SIZE/2, MAP_SIZE, MAP_SIZE, BEIGE);
+        for (i32 gridIndex = -MAP_SIZE/2; gridIndex <= MAP_SIZE/2; gridIndex += 250) {
+            DrawLine(gridIndex, -MAP_SIZE/2, gridIndex, MAP_SIZE/2, LIGHTGRAY);
+            DrawLine(-MAP_SIZE/2, gridIndex, MAP_SIZE/2, gridIndex, LIGHTGRAY);
+        }
     }
 }
 

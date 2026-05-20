@@ -342,6 +342,10 @@ typedef struct Assets {
     Sound damageAudioAliases[3];
     Sound xpGainAudioAliases[3];
     
+    // Map textures
+    Texture2D cobblestone;
+    Texture2D brick;
+    
     // Silhouette shaders
     Shader whiteShader;
     
