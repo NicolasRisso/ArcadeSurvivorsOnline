@@ -37,9 +37,11 @@
 #define AURA_RADIUS 120.0f
 
 #define ENEMY_DEFAULT_HP 100.0f
-
-#define SCREEN_WIDTH 1280
-#define SCREEN_HEIGHT 720
+#define INITIAL_WINDOW_WIDTH 1280
+#define INITIAL_WINDOW_HEIGHT 720
+#define SCREEN_WIDTH GetScreenWidth()
+#define SCREEN_HEIGHT GetScreenHeight()
+#define GetUIScale() fminf((float)GetScreenWidth() / 1280.0f, (float)GetScreenHeight() / 720.0f)
 #define TARGET_FPS 60
 
 #define MAX_ENTITY_AMOUNT 20000

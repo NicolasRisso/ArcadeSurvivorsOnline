@@ -28,7 +28,7 @@ GlobalVariables globalVariables = {
 
 // --- Main Entry Point ---
 int main(void) {
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Arcade Survivors Online");
+    InitWindow(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Arcade Survivors Online");
     Assets_Load();
 
     // Initialize player weapons and relics - Start with 1 random weapon
@@ -59,6 +59,8 @@ int main(void) {
 
         f32 deltaTime = GetFrameTime();
         Vector2 mousePos = GetMousePosition();
+        camera.offset = (Vector2){ (float)GetScreenWidth() / 2.0f, (float)GetScreenHeight() / 2.0f };
+        camera.zoom = GetUIScale();
         
         if (globalVariables.currentGameState == STATE_IN_GAME) {
             if (globalVariables.currentConnectionState.isConnected) {
@@ -216,7 +218,7 @@ int main(void) {
         }
 
         BeginDrawing();
-            if (globalVariables.currentGameState == STATE_IN_GAME) {
+                if (globalVariables.currentGameState == STATE_IN_GAME) {
                 ClearBackground(DARKGRAY);
                 BeginMode2D(camera);
                     Render_Map();
@@ -338,10 +340,11 @@ int main(void) {
 
                 // Draw glassmorphic spectator panel at bottom center if spectating
                 if (globalVariables.currentInGameState == IN_GAME_SPECTATING) {
-                    float panelWidth = 400.0f;
-                    float panelHeight = 80.0f;
+                    float scale = GetUIScale();
+                    float panelWidth = 400.0f * scale;
+                    float panelHeight = 80.0f * scale;
                     float panelX = (SCREEN_WIDTH - panelWidth) / 2.0f;
-                    float panelY = SCREEN_HEIGHT - panelHeight - 40.0f;
+                    float panelY = SCREEN_HEIGHT - panelHeight - 40.0f * scale;
                     
                     // Glassmorphic background
                     DrawRectangleRounded((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(BLACK, 0.6f));
@@ -349,7 +352,10 @@ int main(void) {
                     
                     // Draw a red "SPECTATING" pulsing tag
                     float pulse = 0.5f + 0.5f * sinf(GetTime() * 4.0f);
-                    DrawText("SPECTATING", panelX + (panelWidth - MeasureText("SPECTATING", 14)) / 2.0f, panelY + 12, 14, Fade(RED, 0.7f + 0.3f * pulse));
+                    int spectatingFontSize = (int)(14 * scale);
+                    if (spectatingFontSize < 1) spectatingFontSize = 1;
+                    int spectatingTextWidth = MeasureText("SPECTATING", spectatingFontSize);
+                    DrawText("SPECTATING", panelX + (panelWidth - spectatingTextWidth) / 2.0f, panelY + 12 * scale, spectatingFontSize, Fade(RED, 0.7f + 0.3f * pulse));
                     
                     // Draw the current player spectated name
                     u32 sIdx = (globalVariables.spectatedPlayerID - 1) % MAX_PLAYERS;
@@ -357,20 +363,28 @@ int main(void) {
                     if (globalVariables.spectatedPlayerID == globalVariables.currentConnectionState.localPlayerIdentification) {
                         targetName = TextFormat("%s (YOU)", globalVariables.playerNames[sIdx]);
                     }
-                    int nameSize = 22;
-                    DrawText(targetName, panelX + (panelWidth - MeasureText(targetName, nameSize)) / 2.0f, panelY + 32, nameSize, WHITE);
+                    int nameSize = (int)(22 * scale);
+                    if (nameSize < 1) nameSize = 1;
+                    int nameWidth = MeasureText(targetName, nameSize);
+                    DrawText(targetName, panelX + (panelWidth - nameWidth) / 2.0f, panelY + 32 * scale, nameSize, WHITE);
                     
                     // Draw left and right cycling arrows and keys
-                    DrawText("< A", panelX + 30, panelY + 35, 16, GRAY);
-                    DrawText("D >", panelX + panelWidth - 30 - MeasureText("D >", 16), panelY + 35, 16, GRAY);
+                    int arrowFontSize = (int)(16 * scale);
+                    if (arrowFontSize < 1) arrowFontSize = 1;
+                    DrawText("< A", panelX + 30 * scale, panelY + 35 * scale, arrowFontSize, GRAY);
+                    DrawText("D >", panelX + panelWidth - 30 * scale - MeasureText("D >", arrowFontSize), panelY + 35 * scale, arrowFontSize, GRAY);
                     
-                    DrawText("Press [TAB] to view stats", panelX + (panelWidth - MeasureText("Press [TAB] to view stats", 10)) / 2.0f, panelY + 60, 10, LIGHTGRAY);
+                    int hintFontSize = (int)(10 * scale);
+                    if (hintFontSize < 1) hintFontSize = 1;
+                    int hintWidth = MeasureText("Press [TAB] to view stats", hintFontSize);
+                    DrawText("Press [TAB] to view stats", panelX + (panelWidth - hintWidth) / 2.0f, panelY + 60 * scale, hintFontSize, LIGHTGRAY);
                 }
 
                 DrawFPS(10, 10);
 
                 // Draw active notification
                 if (globalVariables.currentConnectionState.notificationCount > 0) {
+                    float scale = GetUIScale();
                     ClientNotification* activeNotif = &globalVariables.currentConnectionState.notificationQueue[0];
                     f32 flashSpeed = activeNotif->flashDuration;
                     f32 alpha = 1.0f;
@@ -380,34 +394,62 @@ int main(void) {
                         alpha = 0.5f + 0.5f * sinf(angle);
                     }
                     
-                    int fontSize = 36;
+                    int fontSize = (int)(36 * scale);
+                    if (fontSize < 1) fontSize = 1;
                     int textWidth = MeasureText(activeNotif->message, fontSize);
                     int posX = (SCREEN_WIDTH - textWidth) / 2;
-                    int posY = 150;
+                    int posY = (int)(150 * scale);
                     
-                    DrawRectangle(0, posY - 10, SCREEN_WIDTH, fontSize + 20, Fade(BLACK, alpha * 0.4f));
+                    DrawRectangle(0, posY - (int)(10 * scale), SCREEN_WIDTH, fontSize + (int)(20 * scale), Fade(BLACK, alpha * 0.4f));
                     DrawText(activeNotif->message, posX + 2, posY + 2, fontSize, Fade(BLACK, alpha * 0.6f));
                     DrawText(activeNotif->message, posX, posY, fontSize, Fade(activeNotif->color, alpha));
                 }
                 
                 if (!globalVariables.currentConnectionState.isConnected) {
+                    float scale = GetUIScale();
+                    int connectingFontSize = (int)(20 * scale);
+                    if (connectingFontSize < 1) connectingFontSize = 1;
+                    int connectingTextWidth = MeasureText("CONNECTING TO SERVER...", connectingFontSize);
+                    
+                    int ipFontSize = (int)(10 * scale);
+                    if (ipFontSize < 1) ipFontSize = 1;
+                    const char* ipText = TextFormat("Target IP: %s:%d", globalVariables.joinIpAddress, SERVER_PORT);
+                    int ipTextWidth = MeasureText(ipText, ipFontSize);
+                    
                     DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
-                    DrawText("CONNECTING TO SERVER...", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, WHITE);
-                    DrawText(TextFormat("Target IP: %s:%d", globalVariables.joinIpAddress, SERVER_PORT), SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2 + 40, 10, GRAY);
+                    DrawText("CONNECTING TO SERVER...", (SCREEN_WIDTH - connectingTextWidth) / 2, SCREEN_HEIGHT / 2 - connectingFontSize / 2, connectingFontSize, WHITE);
+                    DrawText(ipText, (SCREEN_WIDTH - ipTextWidth) / 2, SCREEN_HEIGHT / 2 + connectingFontSize + (int)(20 * scale), ipFontSize, GRAY);
                 } else {
-                    DrawText("CONNECTED", 10, 30, 20, GREEN);
+                    float scale = GetUIScale();
+                    int connectedFontSize = (int)(20 * scale);
+                    if (connectedFontSize < 1) connectedFontSize = 1;
+                    DrawText("CONNECTED", 10 * scale, 30 * scale, connectedFontSize, GREEN);
                     
                     // Draw local health bar
                     f32 healthPercent = globalVariables.currentConnectionState.health / globalVariables.currentConnectionState.maxHealth;
                     if (healthPercent < 0.0f) healthPercent = 0.0f;
-                    DrawRectangle(10, 60, 200, 20, DARKGRAY);
-                    DrawRectangle(10, 60, (int)(200 * healthPercent), 20, RED);
-                    DrawRectangleLines(10, 60, 200, 20, BLACK);
-                    DrawText(TextFormat("%.0f / %.0f", globalVariables.currentConnectionState.health, globalVariables.currentConnectionState.maxHealth), 70, 65, 10, WHITE);
+                    
+                    float barWidth = 200.0f * scale;
+                    float barHeight = 20.0f * scale;
+                    float barX = 10.0f * scale;
+                    float barY = 60.0f * scale;
+                    
+                    DrawRectangle(barX, barY, barWidth, barHeight, DARKGRAY);
+                    DrawRectangle(barX, barY, (int)(barWidth * healthPercent), barHeight, RED);
+                    DrawRectangleLines(barX, barY, barWidth, barHeight, BLACK);
+                    
+                    int healthTextFontSize = (int)(10 * scale);
+                    if (healthTextFontSize < 1) healthTextFontSize = 1;
+                    const char* healthText = TextFormat("%.0f / %.0f", globalVariables.currentConnectionState.health, globalVariables.currentConnectionState.maxHealth);
+                    int healthTextWidth = MeasureText(healthText, healthTextFontSize);
+                    DrawText(healthText, barX + (barWidth - healthTextWidth) / 2.0f, barY + (barHeight - healthTextFontSize) / 2.0f, healthTextFontSize, WHITE);
                     
                     // Draw lives counter next to the health bar
-                    Render_DrawHeart((Vector2){ 235, 70 }, 10, RED);
-                    DrawText(TextFormat("x %d", globalVariables.currentConnectionState.teamLives), 255, 62, 16, WHITE);
+                    Render_DrawHeart((Vector2){ barX + barWidth + 25.0f * scale, barY + barHeight / 2.0f }, 10 * scale, RED);
+                    
+                    int livesFontSize = (int)(16 * scale);
+                    if (livesFontSize < 1) livesFontSize = 1;
+                    DrawText(TextFormat("x %d", globalVariables.currentConnectionState.teamLives), barX + barWidth + 45.0f * scale, barY + (barHeight - livesFontSize) / 2.0f, livesFontSize, WHITE);
                 }
             } else {
                 ClearBackground((Color){ 10, 12, 18, 255 });
@@ -632,9 +674,9 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 //~ Begin of Input
 
 void Input_Update(InputState* state) {
-    // Toggle Fullscreen globally on F11 key press
+    // Toggle Borderless Fullscreen globally on F11 key press
     if (IsKeyPressed(KEY_F11)) {
-        ToggleFullscreen();
+        ToggleBorderlessWindowed();
     }
 
     state->movementDirection = (Vector2){ 0, 0 };
@@ -896,7 +938,7 @@ bool Render_DrawCustomButton(Rectangle rect, const char* text, Color baseColor, 
     Color borderHighlight = Fade(WHITE, 0.15f + (*animProgress * 0.15f));
     DrawRectangleRoundedLines((Rectangle){ x, y, width, height }, 0.2f, 4, borderHighlight);
     
-    int fontSize = 20;
+    int fontSize = (int)(height * 0.45f);
     int textWidth = MeasureText(text, fontSize);
     Color textColor = hovered ? WHITE : (Color){ 230, 230, 240, 255 };
     DrawText(text, x + (width - textWidth) / 2.0f, y + (height - fontSize) / 2.0f, fontSize, textColor);
@@ -935,7 +977,7 @@ void Render_DrawCustomTextBox(Rectangle rect, char* textBuffer, i32 maxLen, bool
         }
     }
     
-    DrawText(label, rect.x, rect.y - 20, 14, GRAY);
+    DrawText(label, rect.x, rect.y - rect.height * 0.45f, (int)(rect.height * 0.35f), GRAY);
     
     Color boxBg = *active ? Fade(BLACK, 0.45f) : Fade(BLACK, 0.3f);
     DrawRectangleRounded(rect, 0.15f, 4, boxBg);
@@ -943,13 +985,13 @@ void Render_DrawCustomTextBox(Rectangle rect, char* textBuffer, i32 maxLen, bool
     Color borderCol = *active ? SKYBLUE : Fade(WHITE, 0.15f);
     DrawRectangleRoundedLines(rect, 0.15f, 4, borderCol);
     
-    int fontSize = 18;
+    int fontSize = (int)(rect.height * 0.45f);
     DrawText(textBuffer, rect.x + 12, rect.y + (rect.height - fontSize) / 2.0f, fontSize, WHITE);
     
     if (*active) {
         if (((int)(GetTime() * 2.0f) % 2) == 0) {
             int textWidth = MeasureText(textBuffer, fontSize);
-            DrawRectangle(rect.x + 12 + textWidth + 2, rect.y + (rect.height - 18) / 2.0f, 2, 18, SKYBLUE);
+            DrawRectangle(rect.x + 12 + textWidth + 2, rect.y + (rect.height - fontSize) / 2.0f, 2, fontSize, SKYBLUE);
         }
     }
 }
@@ -957,6 +999,7 @@ void Render_DrawCustomTextBox(Rectangle rect, char* textBuffer, i32 maxLen, bool
 void Render_DrawGameTimer(void) {
     if (!globalVariables.currentConnectionState.isConnected) return;
     
+    float scale = GetUIScale();
     f32 elapsed = globalVariables.currentConnectionState.gameTime;
     Color timerColor = WHITE;
     f32 displayTime = 0.0f;
@@ -973,10 +1016,11 @@ void Render_DrawGameTimer(void) {
     int seconds = (int)displayTime % 60;
     
     const char* timeText = TextFormat("%02d:%02d", minutes, seconds);
-    int fontSize = 24;
+    int fontSize = (int)(24 * scale);
+    if (fontSize < 1) fontSize = 1;
     int textWidth = MeasureText(timeText, fontSize);
     
-    DrawText(timeText, SCREEN_WIDTH - textWidth - 50, 55, fontSize, timerColor);
+    DrawText(timeText, SCREEN_WIDTH - textWidth - 50 * scale, 55 * scale, fontSize, timerColor);
 }
 
 void Render_DrawHeart(Vector2 center, f32 size, Color color) {
@@ -1001,27 +1045,28 @@ void Render_DrawHeart(Vector2 center, f32 size, Color color) {
 }
 
 void Render_DrawJoinInputScreen(Vector2 mousePos, f32 deltaTime) {
-    int titleFontSize = 40;
+    float scale = GetUIScale();
+    int titleFontSize = (int)(40 * scale);
     const char* titleText = "JOIN MULTIPLAYER GAME";
     int titleWidth = MeasureText(titleText, titleFontSize);
-    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 90, titleFontSize, SKYBLUE);
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 90 * scale, titleFontSize, SKYBLUE);
     
-    float cardWidth = 450.0f;
-    float cardHeight = 320.0f;
+    float cardWidth = 450.0f * scale;
+    float cardHeight = 320.0f * scale;
     float cardX = (SCREEN_WIDTH - cardWidth) / 2.0f;
-    float cardY = 180.0f;
+    float cardY = 180.0f * scale;
     
     DrawRectangleRounded((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(BLACK, 0.55f));
     DrawRectangleRoundedLines((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(WHITE, 0.15f));
     
     static bool nameBoxActive = false;
-    Render_DrawCustomTextBox((Rectangle){ cardX + 50, cardY + 40, 350, 40 }, globalVariables.myNameInput, 31, &nameBoxActive, "YOUR NAME", mousePos);
+    Render_DrawCustomTextBox((Rectangle){ cardX + 50 * scale, cardY + 40 * scale, 350 * scale, 40 * scale }, globalVariables.myNameInput, 31, &nameBoxActive, "YOUR NAME", mousePos);
     
     static bool ipBoxActive = false;
-    Render_DrawCustomTextBox((Rectangle){ cardX + 50, cardY + 115, 350, 40 }, globalVariables.joinIpAddress, 63, &ipBoxActive, "SERVER IP ADDRESS", mousePos);
+    Render_DrawCustomTextBox((Rectangle){ cardX + 50 * scale, cardY + 115 * scale, 350 * scale, 40 * scale }, globalVariables.joinIpAddress, 63, &ipBoxActive, "SERVER IP ADDRESS", mousePos);
     
     static float connectAnim = 0.0f;
-    Rectangle connectRect = (Rectangle){ cardX + 50, cardY + 185, 350, 45 };
+    Rectangle connectRect = (Rectangle){ cardX + 50 * scale, cardY + 185 * scale, 350 * scale, 45 * scale };
     if (Render_DrawCustomButton(connectRect, "CONNECT", Fade(SKYBLUE, 0.6f), Fade(BLUE, 0.8f), mousePos, deltaTime, &connectAnim)) {
         printf("JOIN: Connecting to %s...\n", globalVariables.joinIpAddress);
         if (Network_InitConnection(&globalVariables.currentConnectionState, globalVariables.joinIpAddress)) {
@@ -1033,31 +1078,32 @@ void Render_DrawJoinInputScreen(Vector2 mousePos, f32 deltaTime) {
     }
     
     static float backAnim = 0.0f;
-    Rectangle backRect = (Rectangle){ cardX + 50, cardY + 245, 350, 45 };
+    Rectangle backRect = (Rectangle){ cardX + 50 * scale, cardY + 245 * scale, 350 * scale, 45 * scale };
     if (Render_DrawCustomButton(backRect, "BACK", Fade(DARKGRAY, 0.6f), Fade(GRAY, 0.8f), mousePos, deltaTime, &backAnim)) {
         globalVariables.currentGameState = STATE_MAIN_MENU;
     }
 }
 
 void Render_DrawLobby(Vector2 mousePos, f32 deltaTime) {
-    int titleFontSize = 40;
+    float scale = GetUIScale();
+    int titleFontSize = (int)(40 * scale);
     const char* titleText = "MULTIPLAYER LOBBY ROOM";
     int titleWidth = MeasureText(titleText, titleFontSize);
-    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 50, titleFontSize, GOLD);
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 50 * scale, titleFontSize, GOLD);
     
-    float cardWidth = 700.0f;
-    float cardHeight = 490.0f;
+    float cardWidth = 700.0f * scale;
+    float cardHeight = 490.0f * scale;
     float cardX = (SCREEN_WIDTH - cardWidth) / 2.0f;
-    float cardY = 120.0f;
+    float cardY = 120.0f * scale;
     
     DrawRectangleRounded((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.05f, 4, Fade(BLACK, 0.55f));
     DrawRectangleRoundedLines((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.05f, 4, Fade(WHITE, 0.15f));
     
     for (u8 i = 1; i <= 4; i++) {
-        float slotX = cardX + 40.0f;
-        float slotY = cardY + 25.0f + (i - 1) * (65.0f + 10.0f);
-        float slotWidth = cardWidth - 80.0f;
-        float slotHeight = 65.0f;
+        float slotX = cardX + 40.0f * scale;
+        float slotY = cardY + 25.0f * scale + (i - 1) * (65.0f * scale + 10.0f * scale);
+        float slotWidth = cardWidth - 80.0f * scale;
+        float slotHeight = 65.0f * scale;
         
         Rectangle slotRec = (Rectangle){ slotX, slotY, slotWidth, slotHeight };
         
@@ -1069,18 +1115,26 @@ void Render_DrawLobby(Vector2 mousePos, f32 deltaTime) {
             if (i == 1) iconCol = GOLD;
             else if (i == (int)globalVariables.currentConnectionState.localPlayerIdentification) iconCol = SKYBLUE;
             
-            DrawCircle(slotX + 35, slotY + slotHeight/2.0f, 15, iconCol);
+            DrawCircle(slotX + 35 * scale, slotY + slotHeight/2.0f, 15 * scale, iconCol);
             
             const char* letter = (i == 1) ? "H" : TextFormat("%d", i);
-            int letterWidth = MeasureText(letter, 12);
-            DrawText(letter, slotX + 35 - letterWidth/2.0f, slotY + slotHeight/2.0f - 6, 12, BLACK);
+            int letterFontSize = (int)(12 * scale);
+            if (letterFontSize < 1) letterFontSize = 1;
+            int letterWidth = MeasureText(letter, letterFontSize);
+            DrawText(letter, slotX + 35 * scale - letterWidth/2.0f, slotY + slotHeight/2.0f - letterFontSize/2.0f, letterFontSize, BLACK);
             
-            DrawText(globalVariables.playerNames[i - 1], slotX + 70, slotY + 22, 20, WHITE);
+            int nameFontSize = (int)(20 * scale);
+            if (nameFontSize < 1) nameFontSize = 1;
+            DrawText(globalVariables.playerNames[i - 1], slotX + 70 * scale, slotY + slotHeight/2.0f - nameFontSize/2.0f, nameFontSize, WHITE);
             
+            int statusFontSize = (int)(14 * scale);
+            if (statusFontSize < 1) statusFontSize = 1;
             if (i == 1) {
-                DrawText("HOST", slotX + slotWidth - 80, slotY + 25, 14, GOLD);
+                int statusWidth = MeasureText("HOST", statusFontSize);
+                DrawText("HOST", slotX + slotWidth - 40 * scale - statusWidth, slotY + slotHeight/2.0f - statusFontSize/2.0f, statusFontSize, GOLD);
             } else {
-                DrawText("READY", slotX + slotWidth - 80, slotY + 25, 14, GREEN);
+                int statusWidth = MeasureText("READY", statusFontSize);
+                DrawText("READY", slotX + slotWidth - 40 * scale - statusWidth, slotY + slotHeight/2.0f - statusFontSize/2.0f, statusFontSize, GREEN);
             }
         } else {
             float pulse = 0.4f + 0.2f * sinf(GetTime() * 3.0f + i);
@@ -1088,8 +1142,10 @@ void Render_DrawLobby(Vector2 mousePos, f32 deltaTime) {
             DrawRectangleRounded(slotRec, 0.15f, 4, Fade(BLACK, 0.2f));
             DrawRectangleRoundedLines(slotRec, 0.15f, 4, Fade(WHITE, 0.08f));
             
-            DrawCircle(slotX + 35, slotY + slotHeight/2.0f, 15, Fade(GRAY, pulse));
-            DrawText("Waiting for player...", slotX + 70, slotY + 24, 16, Fade(GRAY, pulse));
+            DrawCircle(slotX + 35 * scale, slotY + slotHeight/2.0f, 15 * scale, Fade(GRAY, pulse));
+            int waitingFontSize = (int)(16 * scale);
+            if (waitingFontSize < 1) waitingFontSize = 1;
+            DrawText("Waiting for player...", slotX + 70 * scale, slotY + slotHeight/2.0f - waitingFontSize/2.0f, waitingFontSize, Fade(GRAY, pulse));
         }
     }
     
@@ -1097,7 +1153,7 @@ void Render_DrawLobby(Vector2 mousePos, f32 deltaTime) {
     char tempName[32];
     strcpy(tempName, globalVariables.myNameInput);
     
-    Render_DrawCustomTextBox((Rectangle){ cardX + 40, cardY + cardHeight - 80, 300, 40 }, globalVariables.myNameInput, 31, &lobbyNameActive, "CHANGE YOUR NAME", mousePos);
+    Render_DrawCustomTextBox((Rectangle){ cardX + 40 * scale, cardY + cardHeight - 80 * scale, 300 * scale, 40 * scale }, globalVariables.myNameInput, 31, &lobbyNameActive, "CHANGE YOUR NAME", mousePos);
     
     if (strcmp(tempName, globalVariables.myNameInput) != 0) {
         Network_SendNameUpdate(&globalVariables.currentConnectionState, globalVariables.myNameInput);
@@ -1110,43 +1166,46 @@ void Render_DrawLobby(Vector2 mousePos, f32 deltaTime) {
     
     if (globalVariables.currentConnectionState.localPlayerIdentification == 1) {
         static float startBtnAnim = 0.0f;
-        Rectangle startBtnRect = (Rectangle){ cardX + cardWidth - 220, cardY + cardHeight - 80, 180, 40 };
+        Rectangle startBtnRect = (Rectangle){ cardX + cardWidth - 220 * scale, cardY + cardHeight - 80 * scale, 180 * scale, 40 * scale };
         
         if (Render_DrawCustomButton(startBtnRect, "START GAME", (Color){ 245, 130, 48, 255 }, (Color){ 253, 191, 111, 255 }, mousePos, deltaTime, &startBtnAnim)) {
             Network_SendStartGame(&globalVariables.currentConnectionState);
         }
     } else {
         float pulseAlpha = 0.5f + 0.3f * sinf(GetTime() * 4.0f);
-        DrawRectangleRounded((Rectangle){ cardX + cardWidth - 250, cardY + cardHeight - 80, 210, 40 }, 0.2f, 4, Fade(BLACK, 0.4f));
-        DrawRectangleRoundedLines((Rectangle){ cardX + cardWidth - 250, cardY + cardHeight - 80, 210, 40 }, 0.2f, 4, Fade(WHITE, 0.15f));
+        DrawRectangleRounded((Rectangle){ cardX + cardWidth - 250 * scale, cardY + cardHeight - 80 * scale, 210 * scale, 40 * scale }, 0.2f, 4, Fade(BLACK, 0.4f));
+        DrawRectangleRoundedLines((Rectangle){ cardX + cardWidth - 250 * scale, cardY + cardHeight - 80 * scale, 210 * scale, 40 * scale }, 0.2f, 4, Fade(WHITE, 0.15f));
         
-        int textWidth = MeasureText("Waiting for Host...", 14);
-        DrawText("Waiting for Host...", cardX + cardWidth - 250 + (210 - textWidth) / 2.0f, cardY + cardHeight - 80 + 13, 14, Fade(GOLD, pulseAlpha));
+        int textFontSize = (int)(14 * scale);
+        if (textFontSize < 1) textFontSize = 1;
+        int textWidth = MeasureText("Waiting for Host...", textFontSize);
+        DrawText("Waiting for Host...", cardX + cardWidth - 250 * scale + (210 * scale - textWidth) / 2.0f, cardY + cardHeight - 80 * scale + (40 * scale - textFontSize) / 2.0f, textFontSize, Fade(GOLD, pulseAlpha));
     }
 }
 
 void Render_DrawMainMenu(Vector2 mousePos, f32 deltaTime) {
+    float scale = GetUIScale();
     float titleGlow = 0.5f + 0.5f * sinf(GetTime() * 2.0f);
-    int titleFontSize = 48;
+    int titleFontSize = (int)(48 * scale);
     const char* titleText = "ARCADE SURVIVORS ONLINE";
     int titleWidth = MeasureText(titleText, titleFontSize);
     
-    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f + 3, 90 + 3, titleFontSize, Fade(BLACK, 0.5f));
-    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 90, titleFontSize, Fade(GOLD, 0.8f + titleGlow * 0.2f));
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f + 3 * scale, 90 * scale + 3 * scale, titleFontSize, Fade(BLACK, 0.5f));
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 90 * scale, titleFontSize, Fade(GOLD, 0.8f + titleGlow * 0.2f));
     
-    float cardWidth = 400.0f;
-    float cardHeight = 350.0f;
+    float cardWidth = 400.0f * scale;
+    float cardHeight = 350.0f * scale;
     float cardX = (SCREEN_WIDTH - cardWidth) / 2.0f;
-    float cardY = 190.0f;
+    float cardY = 190.0f * scale;
     
     DrawRectangleRounded((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(BLACK, 0.55f));
     DrawRectangleRoundedLines((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(WHITE, 0.15f));
     
     static bool nameBoxActive = false;
-    Render_DrawCustomTextBox((Rectangle){ cardX + 50, cardY + 40, 300, 40 }, globalVariables.myNameInput, 31, &nameBoxActive, "YOUR NAME", mousePos);
+    Render_DrawCustomTextBox((Rectangle){ cardX + 50 * scale, cardY + 40 * scale, 300 * scale, 40 * scale }, globalVariables.myNameInput, 31, &nameBoxActive, "YOUR NAME", mousePos);
     
     static float hostAnim = 0.0f;
-    Rectangle hostRect = (Rectangle){ cardX + 50, cardY + 120, 300, 45 };
+    Rectangle hostRect = (Rectangle){ cardX + 50 * scale, cardY + 120 * scale, 300 * scale, 45 * scale };
     if (Render_DrawCustomButton(hostRect, "HOST GAME", Fade(DARKGREEN, 0.6f), Fade(LIME, 0.8f), mousePos, deltaTime, &hostAnim)) {
         printf("HOST: Spawning server...\n");
         system("start python server/server.py");
@@ -1165,26 +1224,35 @@ void Render_DrawMainMenu(Vector2 mousePos, f32 deltaTime) {
     }
     
     static float joinAnim = 0.0f;
-    Rectangle joinRect = (Rectangle){ cardX + 50, cardY + 185, 300, 45 };
+    Rectangle joinRect = (Rectangle){ cardX + 50 * scale, cardY + 185 * scale, 300 * scale, 45 * scale };
     if (Render_DrawCustomButton(joinRect, "JOIN GAME", Fade(BLUE, 0.6f), Fade(SKYBLUE, 0.8f), mousePos, deltaTime, &joinAnim)) {
         globalVariables.currentGameState = STATE_JOIN_IP;
     }
     
     static float exitAnim = 0.0f;
-    Rectangle exitRect = (Rectangle){ cardX + 50, cardY + 250, 300, 45 };
+    Rectangle exitRect = (Rectangle){ cardX + 50 * scale, cardY + 250 * scale, 300 * scale, 45 * scale };
     if (Render_DrawCustomButton(exitRect, "EXIT TO DESKTOP", Fade(DARKGRAY, 0.6f), Fade(RED, 0.8f), mousePos, deltaTime, &exitAnim)) {
         globalVariables.currentInputState.quitApplication = true;
     }
 }
 
 void Render_DrawStatsOverlay(void) {
+    float scale = GetUIScale();
+    
     // 1. Dark fullscreen backdrop with 50% opacity
     DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.5f));
     
-    // 2. Centered HUD Panel
-    Rectangle hud = { 128, 72, 1024, 576 };
+    // 2. Centered HUD Panel (dynamic size occupying 80% of width and height of 1280x720 scaled)
+    float hudWidth = 1024.0f * scale;
+    float hudHeight = 576.0f * scale;
+    Rectangle hud = {
+        (SCREEN_WIDTH - hudWidth) / 2.0f,
+        (SCREEN_HEIGHT - hudHeight) / 2.0f,
+        hudWidth,
+        hudHeight
+    };
     DrawRectangleRec(hud, Fade(BLACK, 0.85f));
-    DrawRectangleLinesEx(hud, 3, GOLD);
+    DrawRectangleLinesEx(hud, 3 * scale, GOLD);
     
     // Determine which player we are spectating/viewing
     u32 targetPlayerID = globalVariables.spectatedPlayerID;
@@ -1199,8 +1267,10 @@ void Render_DrawStatsOverlay(void) {
     } else {
         headerText = TextFormat("PLAYER PROFILE & STATS (PLAYER %u)", targetPlayerID);
     }
-    DrawText(headerText, hud.x + (hud.width - MeasureText(headerText, 24)) / 2.0f, hud.y + 20, 24, GOLD);
-    DrawLine(hud.x + 50, hud.y + 60, hud.x + 974, hud.y + 60, GRAY);
+    int titleFontSize = (int)(24 * scale);
+    if (titleFontSize < 1) titleFontSize = 1;
+    DrawText(headerText, hud.x + (hud.width - MeasureText(headerText, titleFontSize)) / 2.0f, hud.y + 20 * scale, titleFontSize, GOLD);
+    DrawLine(hud.x + 50 * scale, hud.y + 60 * scale, hud.x + hud.width - 50 * scale, hud.y + 60 * scale, GRAY);
     
     // Get player attributes
     u32 spectatedIndex = (targetPlayerID - 1) % MAX_REMOTE_PLAYERS;
@@ -1252,18 +1322,25 @@ void Render_DrawStatsOverlay(void) {
     }
     
     // 4. Left Column - Equipped Gear
-    float leftX = hud.x + 50;
-    DrawText("EQUIPPED GEAR", leftX, hud.y + 80, 20, SKYBLUE);
+    float leftX = hud.x + 50 * scale;
+    int gearTitleFontSize = (int)(20 * scale);
+    if (gearTitleFontSize < 1) gearTitleFontSize = 1;
+    DrawText("EQUIPPED GEAR", leftX, hud.y + 80 * scale, gearTitleFontSize, SKYBLUE);
     
     // Weapons
-    DrawText("WEAPONS", leftX, hud.y + 115, 16, YELLOW);
+    int weaponTitleFontSize = (int)(16 * scale);
+    if (weaponTitleFontSize < 1) weaponTitleFontSize = 1;
+    DrawText("WEAPONS", leftX, hud.y + 115 * scale, weaponTitleFontSize, YELLOW);
     const char* weaponNames[] = { "", "Fireball", "Crystal Staff", "Death Aura", "Bomb Shoes", "Nature Spikes" };
     Color weaponColors[] = { WHITE, ORANGE, SKYBLUE, BLACK, RED, GREEN };
     for (u8 i = 0; i < 4; i++) {
-        float slotY = hud.y + 145 + i * 32;
+        float slotY = hud.y + 145 * scale + i * 32 * scale;
         Weapon* w = &displayWeapons[i];
+        int slotFontSize = (int)(14 * scale);
+        if (slotFontSize < 1) slotFontSize = 1;
+        
         if (w->type == WEAPON_UNDEFINED) {
-            DrawText(TextFormat("[%d] [Empty Weapon Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
+            DrawText(TextFormat("[%d] [Empty Weapon Slot]", i + 1), leftX + 15 * scale, slotY, slotFontSize, DARKGRAY);
         } else {
             static const LogoType WEAPON_TO_LOGO[] = {
                 [WEAPON_UNDEFINED] = LOGO_UNDEFINED,
@@ -1279,30 +1356,35 @@ void Render_DrawStatsOverlay(void) {
             
             if (globalVariables.assets.loaded) {
                 Rectangle src = globalVariables.assets.logoRects[logo];
-                Rectangle dest = { leftX + 12, slotY, 16, 16 };
+                Rectangle dest = { leftX + 12 * scale, slotY, 16 * scale, 16 * scale };
                 DrawTexturePro(globalVariables.assets.logoAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
-                DrawRectangleLines(leftX + 12, slotY, 16, 16, WHITE);
+                DrawRectangleLines(leftX + 12 * scale, slotY, 16 * scale, 16 * scale, WHITE);
             } else {
-                DrawRectangle(leftX + 15, slotY + 2, 10, 10, weaponColors[w->type]);
-                DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+                DrawRectangle(leftX + 15 * scale, slotY + 2 * scale, 10 * scale, 10 * scale, weaponColors[w->type]);
+                DrawRectangleLines(leftX + 15 * scale, slotY + 2 * scale, 10 * scale, 10 * scale, WHITE);
             }
             
             DrawText(TextFormat("%s  -  Lv.%d  (Dmg: %.1f, Spd: %.2fx, Sz: %.1fx)", 
                                 weaponNames[w->type], w->level, 
                                 w->stats.damage, w->stats.attackSpeed, w->stats.size), 
-                     leftX + 35, slotY, 14, WHITE);
+                     leftX + 35 * scale, slotY, slotFontSize, WHITE);
         }
     }
     
     // Relics
-    DrawText("RELICS", leftX, hud.y + 295, 16, PINK);
+    int relicTitleFontSize = (int)(16 * scale);
+    if (relicTitleFontSize < 1) relicTitleFontSize = 1;
+    DrawText("RELICS", leftX, hud.y + 295 * scale, relicTitleFontSize, PINK);
     const char* relicNames[] = { "", "Relic of Health", "Relic of Damage", "Relic of Attack Speed", "Relic of Size", "Relic of Movement Speed", "Relic of XP Gain", "Relic of Lifesteal" };
     Color relicColors[] = { WHITE, RED, ORANGE, GOLD, PURPLE, LIME, PINK, VIOLET };
     for (u8 i = 0; i < 4; i++) {
-        float slotY = hud.y + 325 + i * 32;
+        float slotY = hud.y + 325 * scale + i * 32 * scale;
         Relic* r = &displayRelics[i];
+        int slotFontSize = (int)(14 * scale);
+        if (slotFontSize < 1) slotFontSize = 1;
+        
         if (r->type == RELIC_UNDEFINED) {
-            DrawText(TextFormat("[%d] [Empty Relic Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
+            DrawText(TextFormat("[%d] [Empty Relic Slot]", i + 1), leftX + 15 * scale, slotY, slotFontSize, DARKGRAY);
         } else {
             static const LogoType RELIC_TO_LOGO[] = {
                 [RELIC_UNDEFINED] = LOGO_UNDEFINED,
@@ -1320,12 +1402,12 @@ void Render_DrawStatsOverlay(void) {
             
             if (globalVariables.assets.loaded) {
                 Rectangle src = globalVariables.assets.logoRects[logo];
-                Rectangle dest = { leftX + 12, slotY, 16, 16 };
+                Rectangle dest = { leftX + 12 * scale, slotY, 16 * scale, 16 * scale };
                 DrawTexturePro(globalVariables.assets.logoAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
-                DrawRectangleLines(leftX + 12, slotY, 16, 16, WHITE);
+                DrawRectangleLines(leftX + 12 * scale, slotY, 16 * scale, 16 * scale, WHITE);
             } else {
-                DrawRectangle(leftX + 15, slotY + 2, 10, 10, relicColors[r->type]);
-                DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+                DrawRectangle(leftX + 15 * scale, slotY + 2 * scale, 10 * scale, 10 * scale, relicColors[r->type]);
+                DrawRectangleLines(leftX + 15 * scale, slotY + 2 * scale, 10 * scale, 10 * scale, WHITE);
             }
             
             static const f32 RELIC_BONUS_MULTIPLIERS[] = {
@@ -1342,31 +1424,40 @@ void Render_DrawStatsOverlay(void) {
             
             DrawText(TextFormat("%s  -  Lv.%d  (+%d%% Bonus)", 
                                 relicNames[r->type], r->level, pct), 
-                     leftX + 35, slotY, 14, WHITE);
+                     leftX + 35 * scale, slotY, slotFontSize, WHITE);
         }
     }
     
     // 5. Vertical Divider Line
-    float midX = hud.x + 500;
-    DrawLine(midX, hud.y + 80, midX, hud.y + 510, GRAY);
+    float midX = hud.x + hud.width * 0.49f;
+    DrawLine(midX, hud.y + 80 * scale, midX, hud.y + hud.height - 66 * scale, GRAY);
     
     // 6. Right Column - Player Attributes
-    float rightX = hud.x + 540;
-    DrawText("PLAYER ATTRIBUTES", rightX, hud.y + 80, 20, GOLD);
+    float rightX = hud.x + hud.width * 0.53f;
+    int rightTitleFontSize = (int)(20 * scale);
+    if (rightTitleFontSize < 1) rightTitleFontSize = 1;
+    DrawText("PLAYER ATTRIBUTES", rightX, hud.y + 80 * scale, rightTitleFontSize, GOLD);
     
-    DrawText(TextFormat("Max Health:               %.1f  (Base: %.1f)", attr->maxHealth, DEFAULT_MAX_HEALTH), rightX + 20, hud.y + 125, 15, WHITE);
-    DrawText(TextFormat("Damage Multiplier:        %.2fx  (Base: %.2fx)", attr->damage, DEFAULT_DAMAGE), rightX + 20, hud.y + 175, 15, WHITE);
-    DrawText(TextFormat("Attack Speed Multiplier:  %.2fx  (Base: %.2fx)", attr->attackSpeed, DEFAULT_ATTACK_SPEED), rightX + 20, hud.y + 225, 15, WHITE);
-    DrawText(TextFormat("Movement Speed Multiplier:%.2fx  (Base: %.2fx)", attr->movementSpeed, DEFAULT_MOVEMENT_SPEED), rightX + 20, hud.y + 275, 15, WHITE);
-    DrawText(TextFormat("Area Size Multiplier:     %.2fx  (Base: %.2fx)", attr->size, DEFAULT_SIZE), rightX + 20, hud.y + 325, 15, WHITE);
-    DrawText(TextFormat("XP Gain Multiplier:       %.2fx  (Base: %.2fx)", attr->xpGained, DEFAULT_XP_GAINED), rightX + 20, hud.y + 375, 15, WHITE);
-    DrawText(TextFormat("Lifesteal Factor:         %.0f%%  (Base: %.0f%%)", attr->lifeSteal * 100.0f, DEFAULT_LIFESTEAL * 100.0f), rightX + 20, hud.y + 425, 15, WHITE);
+    int attrFontSize = (int)(15 * scale);
+    if (attrFontSize < 1) attrFontSize = 1;
+    DrawText(TextFormat("Max Health:               %.1f  (Base: %.1f)", attr->maxHealth, DEFAULT_MAX_HEALTH), rightX + 20 * scale, hud.y + 125 * scale, attrFontSize, WHITE);
+    DrawText(TextFormat("Damage Multiplier:        %.2fx  (Base: %.2fx)", attr->damage, DEFAULT_DAMAGE), rightX + 20 * scale, hud.y + 175 * scale, attrFontSize, WHITE);
+    DrawText(TextFormat("Attack Speed Multiplier:  %.2fx  (Base: %.2fx)", attr->attackSpeed, DEFAULT_ATTACK_SPEED), rightX + 20 * scale, hud.y + 225 * scale, attrFontSize, WHITE);
+    DrawText(TextFormat("Movement Speed Multiplier:%.2fx  (Base: %.2fx)", attr->movementSpeed, DEFAULT_MOVEMENT_SPEED), rightX + 20 * scale, hud.y + 275 * scale, attrFontSize, WHITE);
+    DrawText(TextFormat("Area Size Multiplier:     %.2fx  (Base: %.2fx)", attr->size, DEFAULT_SIZE), rightX + 20 * scale, hud.y + 325 * scale, attrFontSize, WHITE);
+    DrawText(TextFormat("XP Gain Multiplier:       %.2fx  (Base: %.2fx)", attr->xpGained, DEFAULT_XP_GAINED), rightX + 20 * scale, hud.y + 375 * scale, attrFontSize, WHITE);
+    DrawText(TextFormat("Lifesteal Factor:         %.0f%%  (Base: %.0f%%)", attr->lifeSteal * 100.0f, DEFAULT_LIFESTEAL * 100.0f), rightX + 20 * scale, hud.y + 425 * scale, attrFontSize, WHITE);
     
     // Decorative frame highlight around active stats
-    DrawRectangleLinesEx((Rectangle){ rightX, hud.y + 110, 434, 345 }, 1, Fade(GRAY, 0.4f));
+    float rightBoxWidth = hud.width - (rightX - hud.x) - 50.0f * scale;
+    float rightBoxHeight = hud.height - 231.0f * scale;
+    DrawRectangleLinesEx((Rectangle){ rightX, hud.y + 110 * scale, rightBoxWidth, rightBoxHeight }, 1 * scale, Fade(GRAY, 0.4f));
     
     // 7. Footer controls hint
-    DrawText("HOLD [TAB] TO KEEP THIS OVERLAY OPEN", hud.x + 330, hud.y + 535, 14, GRAY);
+    int footerFontSize = (int)(14 * scale);
+    if (footerFontSize < 1) footerFontSize = 1;
+    const char* footerText = "HOLD [TAB] TO KEEP THIS OVERLAY OPEN";
+    DrawText(footerText, hud.x + (hud.width - MeasureText(footerText, footerFontSize)) / 2.0f, hud.y + hud.height - 41 * scale, footerFontSize, GRAY);
 }
 
 void Render_DrawTombstone(Vector2 pos, const char* name, Color nameColor) {
@@ -1396,12 +1487,13 @@ void Render_DrawTombstone(Vector2 pos, const char* name, Color nameColor) {
 }
 
 void Render_DrawUpgradeCards(void) {
-    float cardWidth = 220.0f;
-    float cardHeight = 150.0f;
-    float spacing = 20.0f;
+    float scale = GetUIScale();
+    float cardWidth = 220.0f * scale;
+    float cardHeight = 150.0f * scale;
+    float spacing = 20.0f * scale;
     float totalWidth = (cardWidth * 3) + (spacing * 2);
     float startX = (SCREEN_WIDTH - totalWidth) / 2.0f;
-    float startY = SCREEN_HEIGHT - cardHeight - 20.0f;
+    float startY = SCREEN_HEIGHT - cardHeight - 20.0f * scale;
     
     for (u8 i = 0; i < 3; i++) {
         if (globalVariables.upgradeOptions[i].type == 0) continue;
@@ -1410,14 +1502,17 @@ void Render_DrawUpgradeCards(void) {
         
         // Draw card background
         DrawRectangleRec(card, Fade(BLACK, 0.8f));
-        DrawRectangleLinesEx(card, 2, YELLOW);
+        DrawRectangleLinesEx(card, 2 * scale, YELLOW);
         
         // Draw Header
-        DrawText(TextFormat("[%d] SELECT", i + 1), card.x + 10, card.y + 10, 16, YELLOW);
+        int headerFontSize = (int)(16 * scale);
+        if (headerFontSize < 1) headerFontSize = 1;
+        DrawText(TextFormat("[%d] SELECT", i + 1), card.x + 10 * scale, card.y + 10 * scale, headerFontSize, YELLOW);
         
         // Securely tokenize and wrap name within 140px next to the icon
-        int titleFontSize = 16;
-        int currentY = card.y + 35;
+        int titleFontSize = (int)(16 * scale);
+        if (titleFontSize < 1) titleFontSize = 1;
+        int currentY = card.y + 35 * scale;
         
         char nameBuffer[128];
         strncpy(nameBuffer, globalVariables.upgradeOptions[i].name, sizeof(nameBuffer) - 1);
@@ -1433,9 +1528,9 @@ void Render_DrawUpgradeCards(void) {
                 sprintf(testLine, "%s %s", line, word);
             }
             
-            if (MeasureText(testLine, titleFontSize) > 140) {
-                DrawText(line, card.x + 10, currentY, titleFontSize, WHITE);
-                currentY += titleFontSize + 2;
+            if (MeasureText(testLine, titleFontSize) > 140 * scale) {
+                DrawText(line, card.x + 10 * scale, currentY, titleFontSize, WHITE);
+                currentY += titleFontSize + (int)(2 * scale);
                 strcpy(line, word);
             } else {
                 strcpy(line, testLine);
@@ -1443,15 +1538,17 @@ void Render_DrawUpgradeCards(void) {
             word = strtok(NULL, " ");
         }
         if (strlen(line) > 0) {
-            DrawText(line, card.x + 10, currentY, titleFontSize, WHITE);
-            currentY += titleFontSize + 2;
+            DrawText(line, card.x + 10 * scale, currentY, titleFontSize, WHITE);
+            currentY += titleFontSize + (int)(2 * scale);
         }
         
         // Dynamically compute subsequent positions
-        float levelY = currentY + 5.0f;
-        float descY = levelY + 25.0f;
+        float levelY = currentY + 5.0f * scale;
+        float descY = levelY + 25.0f * scale;
         
         int currentLv = 0;
+        int levelFontSize = (int)(16 * scale);
+        if (levelFontSize < 1) levelFontSize = 1;
         if (globalVariables.upgradeOptions[i].isRelic) {
             for (u8 j = 0; j < 4; j++) {
                 if (globalVariables.playerRelics[j].type == globalVariables.upgradeOptions[i].type) {
@@ -1460,9 +1557,9 @@ void Render_DrawUpgradeCards(void) {
                 }
             }
             if (currentLv > 0) {
-                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, levelY, 16, GREEN);
+                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10 * scale, levelY, levelFontSize, GREEN);
             } else {
-                DrawText("NEW RELIC", card.x + 10, levelY, 16, PINK);
+                DrawText("NEW RELIC", card.x + 10 * scale, levelY, levelFontSize, PINK);
             }
         } else {
             for (u8 j = 0; j < 4; j++) {
@@ -1472,9 +1569,9 @@ void Render_DrawUpgradeCards(void) {
                 }
             }
             if (currentLv > 0) {
-                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10, levelY, 16, GREEN);
+                DrawText(TextFormat("Level %d -> %d", currentLv, currentLv + 1), card.x + 10 * scale, levelY, levelFontSize, GREEN);
             } else {
-                DrawText("NEW WEAPON", card.x + 10, levelY, 16, SKYBLUE);
+                DrawText("NEW WEAPON", card.x + 10 * scale, levelY, levelFontSize, SKYBLUE);
             }
         }
         
@@ -1507,33 +1604,43 @@ void Render_DrawUpgradeCards(void) {
             if (optType < 6) logo = WEAPON_TO_LOGO[optType];
         }
 
+        float iconSize = 40.0f * scale;
+        float iconX = card.x + cardWidth - iconSize - 20.0f * scale;
+        float iconY = card.y + 35.0f * scale;
         if (globalVariables.assets.loaded) {
             Rectangle src = globalVariables.assets.logoRects[logo];
-            Rectangle dest = { card.x + 160, card.y + 35, 40, 40 };
+            Rectangle dest = { iconX, iconY, iconSize, iconSize };
             DrawTexturePro(globalVariables.assets.logoAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
         } else {
-            DrawRectangle(card.x + 160, card.y + 35, 40, 40, globalVariables.upgradeOptions[i].color);
+            DrawRectangle(iconX, iconY, iconSize, iconSize, globalVariables.upgradeOptions[i].color);
         }
-        DrawRectangleLines(card.x + 160, card.y + 35, 40, 40, WHITE);
+        DrawRectangleLines(iconX, iconY, iconSize, iconSize, WHITE);
         
         // Draw Description
-        DrawText(globalVariables.upgradeOptions[i].description, card.x + 10, descY, 14, GRAY);
+        int descFontSize = (int)(14 * scale);
+        if (descFontSize < 1) descFontSize = 1;
+        DrawText(globalVariables.upgradeOptions[i].description, card.x + 10 * scale, descY, descFontSize, GRAY);
     }
 }
 
 void Render_DrawXPBar(void) {
+    float scale = GetUIScale();
     float barWidth = SCREEN_WIDTH * 0.8f;
-    float barHeight = 20.0f;
+    float barHeight = 20.0f * scale;
     float x = (SCREEN_WIDTH - barWidth) / 2.0f;
-    float y = 20.0f;
+    float y = 20.0f * scale;
     
     float progress = (float)globalVariables.playerXP / globalVariables.xpToNextLevel;
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
     
     DrawRectangle(x, y, barWidth, barHeight, Fade(DARKBLUE, 0.5f));
     DrawRectangle(x, y, barWidth * progress, barHeight, SKYBLUE);
     DrawRectangleLines(x, y, barWidth, barHeight, WHITE);
     
-    DrawText(TextFormat("LV %d", globalVariables.playerLevel), (int)x, (int)(y + barHeight + 5), 20, WHITE);
+    int levelFontSize = (int)(20 * scale);
+    if (levelFontSize < 1) levelFontSize = 1;
+    DrawText(TextFormat("LV %d", globalVariables.playerLevel), (int)x, (int)(y + barHeight + 5 * scale), levelFontSize, WHITE);
 }
 
 void Render_Entity(const Entity* entity) {
