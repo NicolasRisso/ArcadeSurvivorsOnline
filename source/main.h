@@ -123,6 +123,23 @@ typedef enum RelicType : u8 {
     RELIC_LIFE_STEAL = 7
 } RelicType;
 
+typedef enum LogoType : u8 {
+    LOGO_UNDEFINED = 0,
+    LOGO_CRYSTAL_STAFF = 1,
+    LOGO_BOMB_SHOES = 2,
+    LOGO_DEATH_AURA = 3,
+    LOGO_NATURE_SPIKES = 4,
+    LOGO_FIRE_RING = 5,
+    LOGO_HEALTH_RELIC = 6,
+    LOGO_DAMAGE_RELIC = 7,
+    LOGO_SIZE_RELIC = 8,
+    LOGO_ATTACK_SPEED_RELIC = 9,
+    LOGO_MOVEMENT_SPEED_RELIC = 10,
+    LOGO_XP_RELIC = 11,
+    LOGO_LIFESTEAL_RELIC = 12,
+    LOGO_COUNT = 13
+} LogoType;
+
 #define MAX_RELIC_LEVEL 5
 
 typedef struct Relic {
@@ -248,6 +265,12 @@ typedef struct UpgradeCandidate {
     u8 type;
 } UpgradeCandidate;
 
+typedef struct Assets {
+    Texture2D logoAtlas;
+    Rectangle logoRects[LOGO_COUNT];
+    bool loaded;
+} Assets;
+
 #include "connection/connection.h"
 
 //~ Centralized State Definitions
@@ -279,9 +302,15 @@ typedef struct GlobalVariables {
 
     MenuParticle menuParticles[MAX_MENU_PARTICLES];
     bool particlesInitialized;
+    Assets assets;
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
+
+//~ Begin of Assets
+void Assets_Load(void);
+void Assets_Unload(void);
+//~ End of Assets
 
 //~ Begin of Enemy
 u32 Enemy_GetAlternativeTargetPlayerID(u32 deadPlayerID, u32 enemyIndex);

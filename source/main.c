@@ -20,12 +20,16 @@ GlobalVariables globalVariables = {
     .spectatedPlayerID = 0,
     .isChoosingUpgrade = false,
     .pendingLevels = 0,
-    .particlesInitialized = false
+    .particlesInitialized = false,
+    .assets = {
+        .loaded = false
+    }
 };
 
 // --- Main Entry Point ---
 int main(void) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Arcade Survivors Online");
+    Assets_Load();
 
     // Initialize player weapons and relics - Start with 1 random weapon
     for (u8 i = 0; i < 4; i++) {
@@ -423,9 +427,57 @@ int main(void) {
     }
 
     Network_CloseConnection();
+    Assets_Unload();
     CloseWindow();
     return 0;
 }
+
+//~ Begin of Assets
+
+void Assets_Load(void) {
+    globalVariables.assets.logoAtlas = LoadTexture("assets/logos/WeaponAndRelicAtlas.png");
+    globalVariables.assets.loaded = (globalVariables.assets.logoAtlas.id > 0);
+    
+    // Map of LogoType enum index to grid cell index in the 512x512 image.
+    // Row 0-2 (cells 0-11) contain the active weapon/relic textures.
+    // Cell 12 (row 3, col 0) is used as an empty/white fallback for LOGO_UNDEFINED.
+    static const u8 LOGO_TO_CELL_INDEX[] = {
+        [LOGO_UNDEFINED] = 12, // col 0, row 3 (unused area)
+        [LOGO_CRYSTAL_STAFF] = 0,
+        [LOGO_BOMB_SHOES] = 1,
+        [LOGO_DEATH_AURA] = 2,
+        [LOGO_NATURE_SPIKES] = 3,
+        [LOGO_FIRE_RING] = 4,
+        [LOGO_HEALTH_RELIC] = 5,
+        [LOGO_DAMAGE_RELIC] = 6,
+        [LOGO_SIZE_RELIC] = 7,
+        [LOGO_ATTACK_SPEED_RELIC] = 8,
+        [LOGO_MOVEMENT_SPEED_RELIC] = 9,
+        [LOGO_XP_RELIC] = 10,
+        [LOGO_LIFESTEAL_RELIC] = 11
+    };
+    
+    for (u8 i = 0; i < LOGO_COUNT; i++) {
+        u8 cellIndex = LOGO_TO_CELL_INDEX[i];
+        u8 col = cellIndex % 4;
+        u8 row = cellIndex / 4;
+        globalVariables.assets.logoRects[i] = (Rectangle){
+            (f32)(col * 128),
+            (f32)(row * 128),
+            128.0f,
+            128.0f
+        };
+    }
+}
+
+void Assets_Unload(void) {
+    if (globalVariables.assets.loaded) {
+        UnloadTexture(globalVariables.assets.logoAtlas);
+        globalVariables.assets.loaded = false;
+    }
+}
+
+//~ End of Assets
 
 //~ Begin of Enemy
 
@@ -580,6 +632,11 @@ void Enemy_UpdateMovement(f32 deltaTime) {
 //~ Begin of Input
 
 void Input_Update(InputState* state) {
+    // Toggle Fullscreen globally on F11 key press
+    if (IsKeyPressed(KEY_F11)) {
+        ToggleFullscreen();
+    }
+
     state->movementDirection = (Vector2){ 0, 0 };
     
     if (globalVariables.currentGameState == STATE_IN_GAME) {
@@ -1208,8 +1265,27 @@ void Render_DrawStatsOverlay(void) {
         if (w->type == WEAPON_UNDEFINED) {
             DrawText(TextFormat("[%d] [Empty Weapon Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
         } else {
-            DrawRectangle(leftX + 15, slotY + 2, 10, 10, weaponColors[w->type]);
-            DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+            static const LogoType WEAPON_TO_LOGO[] = {
+                [WEAPON_UNDEFINED] = LOGO_UNDEFINED,
+                [WEAPON_FIREBALL_RING] = LOGO_FIRE_RING,
+                [WEAPON_CRYSTAL_STAFF] = LOGO_CRYSTAL_STAFF,
+                [WEAPON_DEATH_AURA] = LOGO_DEATH_AURA,
+                [WEAPON_BOMB_SHOES] = LOGO_BOMB_SHOES,
+                [WEAPON_NATURE_SPIKES] = LOGO_NATURE_SPIKES
+            };
+            
+            LogoType logo = LOGO_UNDEFINED;
+            if (w->type < 6) logo = WEAPON_TO_LOGO[w->type];
+            
+            if (globalVariables.assets.loaded) {
+                Rectangle src = globalVariables.assets.logoRects[logo];
+                Rectangle dest = { leftX + 12, slotY, 16, 16 };
+                DrawTexturePro(globalVariables.assets.logoAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+                DrawRectangleLines(leftX + 12, slotY, 16, 16, WHITE);
+            } else {
+                DrawRectangle(leftX + 15, slotY + 2, 10, 10, weaponColors[w->type]);
+                DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+            }
             
             DrawText(TextFormat("%s  -  Lv.%d  (Dmg: %.1f, Spd: %.2fx, Sz: %.1fx)", 
                                 weaponNames[w->type], w->level, 
@@ -1228,8 +1304,29 @@ void Render_DrawStatsOverlay(void) {
         if (r->type == RELIC_UNDEFINED) {
             DrawText(TextFormat("[%d] [Empty Relic Slot]", i + 1), leftX + 15, slotY, 14, DARKGRAY);
         } else {
-            DrawRectangle(leftX + 15, slotY + 2, 10, 10, relicColors[r->type]);
-            DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+            static const LogoType RELIC_TO_LOGO[] = {
+                [RELIC_UNDEFINED] = LOGO_UNDEFINED,
+                [RELIC_HEALTH] = LOGO_HEALTH_RELIC,
+                [RELIC_DAMAGE] = LOGO_DAMAGE_RELIC,
+                [RELIC_ATTACK_SPEED] = LOGO_ATTACK_SPEED_RELIC,
+                [RELIC_SIZE] = LOGO_SIZE_RELIC,
+                [RELIC_MOVEMENT_SPEED] = LOGO_MOVEMENT_SPEED_RELIC,
+                [RELIC_XP_GAIN] = LOGO_XP_RELIC,
+                [RELIC_LIFE_STEAL] = LOGO_LIFESTEAL_RELIC
+            };
+            
+            LogoType logo = LOGO_UNDEFINED;
+            if (r->type < 8) logo = RELIC_TO_LOGO[r->type];
+            
+            if (globalVariables.assets.loaded) {
+                Rectangle src = globalVariables.assets.logoRects[logo];
+                Rectangle dest = { leftX + 12, slotY, 16, 16 };
+                DrawTexturePro(globalVariables.assets.logoAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+                DrawRectangleLines(leftX + 12, slotY, 16, 16, WHITE);
+            } else {
+                DrawRectangle(leftX + 15, slotY + 2, 10, 10, relicColors[r->type]);
+                DrawRectangleLines(leftX + 15, slotY + 2, 10, 10, WHITE);
+            }
             
             static const f32 RELIC_BONUS_MULTIPLIERS[] = {
                 [RELIC_UNDEFINED] = 0.0f,
@@ -1381,8 +1478,42 @@ void Render_DrawUpgradeCards(void) {
             }
         }
         
-        // Small Color Box
-        DrawRectangle(card.x + 160, card.y + 35, 40, 40, globalVariables.upgradeOptions[i].color);
+        // Small Color Box or High-Resolution Texture Icon
+        static const LogoType WEAPON_TO_LOGO[] = {
+            [WEAPON_UNDEFINED] = LOGO_UNDEFINED,
+            [WEAPON_FIREBALL_RING] = LOGO_FIRE_RING,
+            [WEAPON_CRYSTAL_STAFF] = LOGO_CRYSTAL_STAFF,
+            [WEAPON_DEATH_AURA] = LOGO_DEATH_AURA,
+            [WEAPON_BOMB_SHOES] = LOGO_BOMB_SHOES,
+            [WEAPON_NATURE_SPIKES] = LOGO_NATURE_SPIKES
+        };
+
+        static const LogoType RELIC_TO_LOGO[] = {
+            [RELIC_UNDEFINED] = LOGO_UNDEFINED,
+            [RELIC_HEALTH] = LOGO_HEALTH_RELIC,
+            [RELIC_DAMAGE] = LOGO_DAMAGE_RELIC,
+            [RELIC_ATTACK_SPEED] = LOGO_ATTACK_SPEED_RELIC,
+            [RELIC_SIZE] = LOGO_SIZE_RELIC,
+            [RELIC_MOVEMENT_SPEED] = LOGO_MOVEMENT_SPEED_RELIC,
+            [RELIC_XP_GAIN] = LOGO_XP_RELIC,
+            [RELIC_LIFE_STEAL] = LOGO_LIFESTEAL_RELIC
+        };
+
+        LogoType logo = LOGO_UNDEFINED;
+        u8 optType = globalVariables.upgradeOptions[i].type;
+        if (globalVariables.upgradeOptions[i].isRelic) {
+            if (optType < 8) logo = RELIC_TO_LOGO[optType];
+        } else {
+            if (optType < 6) logo = WEAPON_TO_LOGO[optType];
+        }
+
+        if (globalVariables.assets.loaded) {
+            Rectangle src = globalVariables.assets.logoRects[logo];
+            Rectangle dest = { card.x + 160, card.y + 35, 40, 40 };
+            DrawTexturePro(globalVariables.assets.logoAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+        } else {
+            DrawRectangle(card.x + 160, card.y + 35, 40, 40, globalVariables.upgradeOptions[i].color);
+        }
         DrawRectangleLines(card.x + 160, card.y + 35, 40, 40, WHITE);
         
         // Draw Description
