@@ -48,6 +48,7 @@ int main(void) {
     camera.offset = (Vector2){ SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT / 2.0f };
     camera.rotation = 0.0f;
     camera.zoom = 1.0f;
+    globalVariables.localFacingX = 1.0f; // Default facing right
 
     SetTargetFPS(TARGET_FPS);
 
@@ -302,7 +303,16 @@ int main(void) {
                         if (globalVariables.currentConnectionState.health <= 0.0f) {
                             Render_DrawTombstone(globalVariables.currentConnectionState.localPosition, globalVariables.playerNames[idx], BLUE);
                         } else {
-                            DrawCircleV(globalVariables.currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
+                            // Draw local player sprite (or circle fallback)
+                            bool isMoving = (globalVariables.currentInputState.movementDirection.x != 0.0f ||
+                                             globalVariables.currentInputState.movementDirection.y != 0.0f);
+                            bool flipX = (globalVariables.localFacingX < 0.0f);
+                            if (globalVariables.assets.loaded && globalVariables.assets.spriteAtlas.id > 0) {
+                                Render_Sprite(SPRITE_PLAYER_IDLE, globalVariables.currentConnectionState.localPosition,
+                                              48.0f, flipX, isMoving ? GetTime() : 0.0f);
+                            } else {
+                                DrawCircleV(globalVariables.currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
+                            }
                             
                             // Draw local player high-frequency pulse damage flash if timer is active
                             if (globalVariables.currentConnectionState.damageFlashTimer > 0) {
@@ -510,11 +520,114 @@ void Assets_Load(void) {
             128.0f
         };
     }
+    
+    //~ Begin Sprite Atlas
+    // 512x512 atlas, 4 cols x 4 rows, 128x128 per cell.
+    // SpriteType value maps to cell (spriteType - 1).
+    // SPRITE_UNDEFINED (0) maps to cell 15 = (3,3) which is blank.
+    globalVariables.assets.spriteAtlas = LoadTexture("assets/atlas/PlayerEnemiesProjectilesAtlas.png");
+    if (globalVariables.assets.spriteAtlas.id == 0) {
+        printf("[ASSETS] WARNING: Failed to load sprite atlas!\n");
+    }
+    
+    static const u8 SPRITE_TO_CELL[] = {
+        [SPRITE_UNDEFINED]     = 15, // (3,3) blank error fallback
+        [SPRITE_PLAYER_IDLE]   = 0,  // (0,0)
+        [SPRITE_PLAYER_WALK_1] = 1,  // (1,0)
+        [SPRITE_PLAYER_WALK_2] = 2,  // (2,0)
+        [SPRITE_PLAYER_WALK_3] = 3,  // (3,0)
+        [SPRITE_ENEMY_NORMAL]  = 4,  // (0,1)
+        [SPRITE_ENEMY_FAST]    = 5,  // (1,1)
+        [SPRITE_ENEMY_TANK]    = 6,  // (2,1)
+        [SPRITE_ENEMY_BOSS]    = 7,  // (3,1)
+        [SPRITE_XP_CRYSTAL]    = 8,  // (0,2)
+        [SPRITE_FIREBALL]      = 9,  // (1,2)
+        [SPRITE_CRYSTAL_SHARD] = 10, // (2,2)
+        [SPRITE_NATURE_SPIKES] = 11, // (3,2)
+        [SPRITE_BOMB]          = 12  // (0,3)
+    };
+    
+    for (u8 i = 0; i < SPRITE_TYPE_COUNT; i++) {
+        u8 cell = SPRITE_TO_CELL[i];
+        u8 col = cell % 4;
+        u8 row = cell / 4;
+        globalVariables.assets.spriteRects[i] = (Rectangle){
+            (f32)(col * 128), (f32)(row * 128), 128.0f, 128.0f
+        };
+    }
+    
+    // Initialize all renderers to UNDEFINED by default
+    for (u8 i = 0; i < SPRITE_TYPE_COUNT; i++) {
+        globalVariables.assets.entityRenderers[i].type = RENDERER_UNDEFINED;
+        globalVariables.assets.entityRenderers[i].drawSize = 40.0f;
+    }
+    
+    // Player: idle = static single frame. Walk = animated (cycles frames 1->2->3 when moving)
+    globalVariables.assets.entityRenderers[SPRITE_PLAYER_IDLE] = (SpriteRenderer){
+        .type = RENDERER_ANIMATED_SPRITE,
+        .drawSize = 48.0f,
+        .animatedSprite = {
+            .frames = { SPRITE_PLAYER_WALK_1, SPRITE_PLAYER_WALK_2, SPRITE_PLAYER_WALK_3, 0 },
+            .frameCount = 3,
+            .frameDuration = 0.15f
+        }
+    };
+    
+    // Enemies — all static, flipped by velocity direction
+    globalVariables.assets.entityRenderers[SPRITE_ENEMY_NORMAL] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 40.0f,
+        .staticSprite = { .spriteIndex = SPRITE_ENEMY_NORMAL }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_ENEMY_FAST] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 30.0f,
+        .staticSprite = { .spriteIndex = SPRITE_ENEMY_FAST }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_ENEMY_TANK] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 60.0f,
+        .staticSprite = { .spriteIndex = SPRITE_ENEMY_TANK }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_ENEMY_BOSS] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 100.0f,
+        .staticSprite = { .spriteIndex = SPRITE_ENEMY_BOSS }
+    };
+    
+    // Projectiles & items — all static
+    globalVariables.assets.entityRenderers[SPRITE_XP_CRYSTAL] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 24.0f,
+        .staticSprite = { .spriteIndex = SPRITE_XP_CRYSTAL }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_FIREBALL] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 24.0f,
+        .staticSprite = { .spriteIndex = SPRITE_FIREBALL }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_CRYSTAL_SHARD] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 20.0f,
+        .staticSprite = { .spriteIndex = SPRITE_CRYSTAL_SHARD }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_NATURE_SPIKES] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 40.0f,
+        .staticSprite = { .spriteIndex = SPRITE_NATURE_SPIKES }
+    };
+    globalVariables.assets.entityRenderers[SPRITE_BOMB] = (SpriteRenderer){
+        .type = RENDERER_STATIC_SPRITE,
+        .drawSize = 28.0f,
+        .staticSprite = { .spriteIndex = SPRITE_BOMB }
+    };
+    //~ End Sprite Atlas
 }
 
 void Assets_Unload(void) {
     if (globalVariables.assets.loaded) {
         UnloadTexture(globalVariables.assets.logoAtlas);
+        UnloadTexture(globalVariables.assets.spriteAtlas);
         globalVariables.assets.loaded = false;
     }
 }
@@ -907,12 +1020,55 @@ void Player_UpdateMovement(f32 deltaTime) {
         }
     }
     
+    // Track facing direction for sprite flipping (client-side only)
+    if (globalVariables.currentInputState.movementDirection.x > 0.01f) {
+        globalVariables.localFacingX = 1.0f;
+    } else if (globalVariables.currentInputState.movementDirection.x < -0.01f) {
+        globalVariables.localFacingX = -1.0f;
+    }
+    
     Network_SendVelocity(&globalVariables.currentConnectionState, movementVelocity);
 }
 
 //~ End of Player
 
 //~ Begin of Renderer
+
+// Draws a sprite from the sprite atlas. When animTime == 0.0f, draws the idle (static) frame.
+// When animTime > 0.0f, cycles through the animated walk frames.
+// flipX mirrors the sprite horizontally (negative src.width trick in DrawTexturePro).
+void Render_Sprite(SpriteType spriteType, Vector2 position, f32 size, bool flipX, f32 animTime) {
+    if (!globalVariables.assets.loaded || spriteType >= SPRITE_TYPE_COUNT) return;
+    if (globalVariables.assets.spriteAtlas.id == 0) return;
+    
+    SpriteRenderer* renderer = &globalVariables.assets.entityRenderers[spriteType];
+    SpriteType frameIndex = spriteType; // Default: draw the sprite itself (idle frame)
+    
+    // For animated sprites, only cycle frames when moving (animTime > 0)
+    // animTime == 0 stays on the idle frame
+    if (renderer->type == RENDERER_ANIMATED_SPRITE &&
+        renderer->animatedSprite.frameCount > 0 && animTime > 0.0f) {
+        f32 totalDuration = renderer->animatedSprite.frameDuration * (f32)renderer->animatedSprite.frameCount;
+        f32 t = fmodf(animTime, totalDuration);
+        u8 frame = (u8)(t / renderer->animatedSprite.frameDuration);
+        if (frame >= renderer->animatedSprite.frameCount) frame = 0;
+        frameIndex = renderer->animatedSprite.frames[frame];
+    }
+    
+    Rectangle src = globalVariables.assets.spriteRects[frameIndex];
+    // Negative src.width flips the sprite horizontally in DrawTexturePro
+    if (flipX) src.width = -128.0f;
+    
+    f32 drawSize = (size > 0.0f) ? size : renderer->drawSize;
+    Rectangle dest = {
+        position.x - drawSize / 2.0f,
+        position.y - drawSize / 2.0f,
+        drawSize,
+        drawSize
+    };
+    
+    DrawTexturePro(globalVariables.assets.spriteAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+}
 
 bool Render_DrawCustomButton(Rectangle rect, const char* text, Color baseColor, Color hoverColor, Vector2 mousePos, f32 deltaTime, f32* animProgress) {
     bool hovered = CheckCollisionPointRec(mousePos, rect);
@@ -1649,7 +1805,7 @@ void Render_Entity(const Entity* entity) {
     // Hide dead enemies (waiting for server despawn)
     if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_ENEMY && entity->character.health <= 0) return;
 
-    // Struct to encapsulate enemy rendering properties
+    // Struct to encapsulate enemy rendering properties (for HP bar, label, fallback radius)
     typedef struct {
         f32 radiusMultiplier;
         Color baseColor;
@@ -1665,6 +1821,26 @@ void Render_Entity(const Entity* entity) {
         [ENEMY_CLASS_BOSS]   = { 2.5f,  MAROON,     "BOSS",  100 }
     };
 
+    // Enum-indexed: EnemyClass -> SpriteType
+    static const SpriteType ENEMY_CLASS_TO_SPRITE[] = {
+        [ENEMY_CLASS_NORMAL] = SPRITE_ENEMY_NORMAL,
+        [ENEMY_CLASS_FAST]   = SPRITE_ENEMY_FAST,
+        [ENEMY_CLASS_TANK]   = SPRITE_ENEMY_TANK,
+        [ENEMY_CLASS_BOSS]   = SPRITE_ENEMY_BOSS
+    };
+
+    // Enum-indexed: ProjectileType -> SpriteType (SPRITE_UNDEFINED = keep primitive)
+    static const SpriteType PROJECTILE_TO_SPRITE[] = {
+        [PROJECTILE_UNDEFINED] = SPRITE_UNDEFINED,
+        [PROJECTILE_FIREBALL]  = SPRITE_FIREBALL,
+        [PROJECTILE_CRYSTAL]   = SPRITE_CRYSTAL_SHARD,
+        [PROJECTILE_BOMB]      = SPRITE_BOMB,
+        [PROJECTILE_SPIKE]     = SPRITE_NATURE_SPIKES,
+        [PROJECTILE_EXPLOSION] = SPRITE_UNDEFINED  // Keep animated primitive for explosions
+    };
+
+    bool spritesAvailable = (globalVariables.assets.loaded && globalVariables.assets.spriteAtlas.id > 0);
+
     switch (entity->entityType) {
         case ENTITY_CHARACTER:
             if (entity->character.characterType == CHARACTER_PLAYER) {
@@ -1674,7 +1850,15 @@ void Render_Entity(const Entity* entity) {
                 if (entity->character.health <= 0.0f) {
                     Render_DrawTombstone(entity->character.position, displayName, MAROON);
                 } else {
-                    DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
+                    // Draw remote player sprite (or circle fallback)
+                    bool isMoving = (entity->character.velocity.x != 0.0f || entity->character.velocity.y != 0.0f);
+                    bool flipX = (entity->character.velocity.x < 0.0f);
+                    if (spritesAvailable) {
+                        Render_Sprite(SPRITE_PLAYER_IDLE, entity->character.position, 48.0f, flipX, isMoving ? GetTime() : 0.0f);
+                    } else {
+                        DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
+                    }
+                    
                     int textWidth = MeasureText(displayName, 12);
                     DrawText(displayName, entity->character.position.x - textWidth / 2, entity->character.position.y - 40, 12, MAROON);
                     
@@ -1693,14 +1877,30 @@ void Render_Entity(const Entity* entity) {
                 const char* labelText = props.labelText;
                 i32 barWidth = props.barWidth;
                 
-                DrawCircleV(entity->character.position, radius, baseColor);
-                // Draw HP Bar
-                f32 hpPercent = entity->character.health / entity->character.maxHealth;
-                if (hpPercent < 0.0f) hpPercent = 0.0f;
-                if (hpPercent > 1.0f) hpPercent = 1.0f;
-                DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, barWidth, 5, DARKGRAY);
-                DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, (int)(barWidth * hpPercent), 5, GREEN);
-                DrawText(labelText, entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 25, 10, baseColor);
+                // Draw enemy sprite (or circle fallback), flipped toward target
+                if (spritesAvailable) {
+                    SpriteType sprite = ENEMY_CLASS_TO_SPRITE[entity->character.enemyClass];
+                    f32 drawSize = globalVariables.assets.entityRenderers[sprite].drawSize;
+                    bool flipX = (entity->character.velocity.x < 0.0f);
+                    Render_Sprite(sprite, entity->character.position, drawSize, flipX, 0.0f);
+                    // HP bar positioned above sprite
+                    f32 barY = entity->character.position.y - drawSize / 2.0f - 10.0f;
+                    f32 hpPercent = entity->character.health / entity->character.maxHealth;
+                    if (hpPercent < 0.0f) hpPercent = 0.0f;
+                    if (hpPercent > 1.0f) hpPercent = 1.0f;
+                    DrawRectangle(entity->character.position.x - barWidth / 2, barY, barWidth, 5, DARKGRAY);
+                    DrawRectangle(entity->character.position.x - barWidth / 2, barY, (int)(barWidth * hpPercent), 5, GREEN);
+                    DrawText(labelText, entity->character.position.x - barWidth / 2, barY - 15, 10, baseColor);
+                } else {
+                    DrawCircleV(entity->character.position, radius, baseColor);
+                    // HP Bar
+                    f32 hpPercent = entity->character.health / entity->character.maxHealth;
+                    if (hpPercent < 0.0f) hpPercent = 0.0f;
+                    if (hpPercent > 1.0f) hpPercent = 1.0f;
+                    DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, barWidth, 5, DARKGRAY);
+                    DrawRectangle(entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 10, (int)(barWidth * hpPercent), 5, GREEN);
+                    DrawText(labelText, entity->character.position.x - barWidth / 2, entity->character.position.y - radius - 25, 10, baseColor);
+                }
                 
                 // Draw enemy smooth ease-in/ease-out damage flash if timer is active
                 if (entity->character.damageFlashTimer > 0) {
@@ -1712,41 +1912,61 @@ void Render_Entity(const Entity* entity) {
                 }
             }
             break;
-        case ENTITY_PROJECTILE:
-            if (entity->proj.type == PROJECTILE_FIREBALL) {
-                DrawCircleV(entity->proj.position, 10, ORANGE);
-                DrawCircleV(entity->proj.position, 6, YELLOW);
-            } else if (entity->proj.type == PROJECTILE_CRYSTAL) {
-                DrawCircleV(entity->proj.position, 8, SKYBLUE);
-                DrawCircleV(entity->proj.position, 4, WHITE);
-            } else if (entity->proj.type == PROJECTILE_BOMB) {
-                DrawCircleV(entity->proj.position, 12, BLACK);
-                DrawCircleV(entity->proj.position, 6, RED);
-                // Draw explosion radius preview if about to explode
-                if (entity->proj.lifetime < 1.0f) {
-                    DrawCircleLinesV(entity->proj.position, entity->proj.radius, Fade(RED, 0.5f));
-                }
-            } else if (entity->proj.type == PROJECTILE_SPIKE) {
-                f32 spikeSize = entity->proj.radius;
-                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 20.0f * spikeSize},
-                             (Vector2){entity->proj.position.x - 15.0f * spikeSize, entity->proj.position.y + 10.0f * spikeSize},
-                             (Vector2){entity->proj.position.x + 15.0f * spikeSize, entity->proj.position.y + 10.0f * spikeSize}, BROWN);
-                DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 25.0f * spikeSize},
-                             (Vector2){entity->proj.position.x - 10.0f * spikeSize, entity->proj.position.y + 5.0f * spikeSize},
-                             (Vector2){entity->proj.position.x + 10.0f * spikeSize, entity->proj.position.y + 5.0f * spikeSize}, GRAY);
-            } else if (entity->proj.type == PROJECTILE_EXPLOSION) {
+        case ENTITY_PROJECTILE: {
+            ProjectileType pType = entity->proj.type;
+            // Explosions always use animated primitive (no atlas frame)
+            if (pType == PROJECTILE_EXPLOSION) {
                 f32 scale = entity->proj.lifetime / 0.5f; // lifetime goes from 0.5 to 0
                 f32 radius = entity->proj.radius;
                 if (radius <= 0) radius = BOMB_RADIUS; // Fallback
-                
                 DrawCircleV(entity->proj.position, radius * (1.0f - scale), Fade(ORANGE, scale));
                 DrawCircleV(entity->proj.position, (radius * 0.6f) * (1.0f - scale), Fade(YELLOW, scale));
+                break;
+            }
+            
+            SpriteType projSprite = (pType < PROJECTILE_EXPLOSION) ? PROJECTILE_TO_SPRITE[pType] : SPRITE_UNDEFINED;
+            
+            if (spritesAvailable && projSprite != SPRITE_UNDEFINED) {
+                f32 drawSize = globalVariables.assets.entityRenderers[projSprite].drawSize;
+                Render_Sprite(projSprite, entity->proj.position, drawSize, false, 0.0f);
+                // Keep explosion radius preview ring for bomb
+                if (pType == PROJECTILE_BOMB && entity->proj.lifetime < 1.0f) {
+                    DrawCircleLinesV(entity->proj.position, entity->proj.radius, Fade(RED, 0.5f));
+                }
+            } else {
+                // Primitive fallback per projectile type
+                if (pType == PROJECTILE_FIREBALL) {
+                    DrawCircleV(entity->proj.position, 10, ORANGE);
+                    DrawCircleV(entity->proj.position, 6, YELLOW);
+                } else if (pType == PROJECTILE_CRYSTAL) {
+                    DrawCircleV(entity->proj.position, 8, SKYBLUE);
+                    DrawCircleV(entity->proj.position, 4, WHITE);
+                } else if (pType == PROJECTILE_BOMB) {
+                    DrawCircleV(entity->proj.position, 12, BLACK);
+                    DrawCircleV(entity->proj.position, 6, RED);
+                    if (entity->proj.lifetime < 1.0f) {
+                        DrawCircleLinesV(entity->proj.position, entity->proj.radius, Fade(RED, 0.5f));
+                    }
+                } else if (pType == PROJECTILE_SPIKE) {
+                    f32 spikeSize = entity->proj.radius;
+                    DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 20.0f * spikeSize},
+                                 (Vector2){entity->proj.position.x - 15.0f * spikeSize, entity->proj.position.y + 10.0f * spikeSize},
+                                 (Vector2){entity->proj.position.x + 15.0f * spikeSize, entity->proj.position.y + 10.0f * spikeSize}, BROWN);
+                    DrawTriangle((Vector2){entity->proj.position.x, entity->proj.position.y - 25.0f * spikeSize},
+                                 (Vector2){entity->proj.position.x - 10.0f * spikeSize, entity->proj.position.y + 5.0f * spikeSize},
+                                 (Vector2){entity->proj.position.x + 10.0f * spikeSize, entity->proj.position.y + 5.0f * spikeSize}, GRAY);
+                }
             }
             break;
+        }
         case ENTITY_XP_CRYSTAL:
-            DrawPoly(entity->xpCrystal.position, 4, 12, 45, SKYBLUE);
-            DrawPoly(entity->xpCrystal.position, 4, 8, 45, BLUE);
-            DrawPoly(entity->xpCrystal.position, 4, 4, 45, WHITE);
+            if (spritesAvailable) {
+                Render_Sprite(SPRITE_XP_CRYSTAL, entity->xpCrystal.position, 24.0f, false, 0.0f);
+            } else {
+                DrawPoly(entity->xpCrystal.position, 4, 12, 45, SKYBLUE);
+                DrawPoly(entity->xpCrystal.position, 4, 8, 45, BLUE);
+                DrawPoly(entity->xpCrystal.position, 4, 4, 45, WHITE);
+            }
             break;
         default:
             break;

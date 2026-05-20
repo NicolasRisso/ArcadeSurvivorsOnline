@@ -142,6 +142,50 @@ typedef enum LogoType : u8 {
     LOGO_COUNT = 13
 } LogoType;
 
+typedef enum SpriteType : u8 {
+    SPRITE_UNDEFINED       = 0,  // Error sentinel — maps to blank cell (3,3)
+    SPRITE_PLAYER_IDLE     = 1,  // Cell (0,0)
+    SPRITE_PLAYER_WALK_1   = 2,  // Cell (1,0)
+    SPRITE_PLAYER_WALK_2   = 3,  // Cell (2,0)
+    SPRITE_PLAYER_WALK_3   = 4,  // Cell (3,0)
+    SPRITE_ENEMY_NORMAL    = 5,  // Cell (0,1)
+    SPRITE_ENEMY_FAST      = 6,  // Cell (1,1)
+    SPRITE_ENEMY_TANK      = 7,  // Cell (2,1)
+    SPRITE_ENEMY_BOSS      = 8,  // Cell (3,1)
+    SPRITE_XP_CRYSTAL      = 9,  // Cell (0,2)
+    SPRITE_FIREBALL        = 10, // Cell (1,2)
+    SPRITE_CRYSTAL_SHARD   = 11, // Cell (2,2)
+    SPRITE_NATURE_SPIKES   = 12, // Cell (3,2)
+    SPRITE_BOMB            = 13, // Cell (0,3)
+    SPRITE_TYPE_COUNT      = 14
+} SpriteType;
+
+typedef enum RendererType : u8 {
+    RENDERER_UNDEFINED       = 0,
+    RENDERER_NO_SPRITE       = 1,  // Keep primitive rendering (explosions, damage popups)
+    RENDERER_STATIC_SPRITE   = 2,  // Single frame from atlas
+    RENDERER_ANIMATED_SPRITE = 3   // Multiple frames cycling from atlas
+} RendererType;
+
+typedef struct StaticSprite {
+    SpriteType spriteIndex; // Index into spriteRects[]
+} StaticSprite;
+
+typedef struct AnimatedSprite {
+    SpriteType frames[4];   // Up to 4 frame indices into spriteRects[]
+    u8 frameCount;          // How many frames in the animation cycle
+    f32 frameDuration;      // Seconds per frame
+} AnimatedSprite;
+
+typedef struct SpriteRenderer {
+    RendererType type;
+    f32 drawSize;           // World-space width/height for the destination rect
+    union {
+        StaticSprite   staticSprite;
+        AnimatedSprite animatedSprite;
+    };
+} SpriteRenderer;
+
 #define MAX_RELIC_LEVEL 5
 
 typedef struct Relic {
@@ -268,8 +312,15 @@ typedef struct UpgradeCandidate {
 } UpgradeCandidate;
 
 typedef struct Assets {
+    // Logo atlas (weapon/relic icons for UI)
     Texture2D logoAtlas;
     Rectangle logoRects[LOGO_COUNT];
+    
+    // Sprite atlas (gameplay entities)
+    Texture2D spriteAtlas;
+    Rectangle spriteRects[SPRITE_TYPE_COUNT]; // Source rects for each sprite cell
+    SpriteRenderer entityRenderers[SPRITE_TYPE_COUNT]; // Enum-indexed renderer definitions
+    
     bool loaded;
 } Assets;
 
@@ -305,6 +356,7 @@ typedef struct GlobalVariables {
     MenuParticle menuParticles[MAX_MENU_PARTICLES];
     bool particlesInitialized;
     Assets assets;
+    f32 localFacingX; // 1.0f = right, -1.0f = left (default 1.0f)
 } GlobalVariables;
 
 extern GlobalVariables globalVariables;
@@ -346,6 +398,7 @@ void Render_DrawUpgradeCards(void);
 void Render_DrawXPBar(void);
 void Render_Entity(const Entity* entity);
 void Render_Map(void);
+void Render_Sprite(SpriteType spriteType, Vector2 position, f32 size, bool flipX, f32 animTime);
 void Render_SpawnDamagePopup(Vector2 position, f32 damage, Color color);
 void Render_UpdateAndDrawMenuParticles(f32 deltaTime);
 //~ End of Renderer
