@@ -14,6 +14,7 @@
 #define MAX_ENEMIES 3000
 #define MAX_XP_CRYSTALS 2000
 #define MAX_PLAYERS 4
+#define MAX_MENU_PARTICLES 80
 
 #define MAGNET_RADIUS 200.0f
 #define COLLECT_RADIUS 30.0f
@@ -59,11 +60,6 @@
 #define RELIC_LEVELUP_XPGAIN 0.08f
 #define RELIC_LEVELUP_LIFESTEAL 0.01f
 
-//~ Begin of Utility Structs
-typedef struct f32Range { f32 minimum; f32 maximum; } f32Range;
-typedef struct u16Range { u16 minimum; u16 maximum; } u16Range;
-//~ End of Utility Structs
-
 //~ Begin of Enums
 typedef enum GameState {
     STATE_MAIN_MENU = 0,
@@ -71,8 +67,6 @@ typedef enum GameState {
     STATE_LOBBY = 2,
     STATE_IN_GAME = 3
 } GameState;
-
-extern char playerNames[MAX_PLAYERS][32];
 
 typedef enum InGameState {
     IN_GAME_PLAYING = 0,
@@ -136,9 +130,8 @@ typedef struct Relic {
     u8 level;
 } Relic;
 
-
 //~ Begin of Structs
-typedef struct Character{
+typedef struct Character {
     CharacterType characterType;
     Vector2 position;
     Vector2 velocity;
@@ -227,7 +220,7 @@ typedef struct LevelUpOption {
     Color color;
 } LevelUpOption;
 
-typedef struct Entity{
+typedef struct Entity {
     EntityType entityType;
     union { 
         Character character; 
@@ -237,50 +230,101 @@ typedef struct Entity{
     };
 } Entity;
 
-//~ Global Definitions
-typedef struct GlobalVariables{
-    Entity entities[MAX_ENTITY_AMOUNT];
-    Weapon playerWeapons[4];
-    Relic playerRelics[4];
-    PlayerAttributes playerAttributes[MAX_PLAYERS];
-} GlobalVariables;
+typedef struct MenuParticle {
+    Vector2 position;
+    Vector2 velocity;
+    f32 size;
+    f32 alpha;
+    Color color;
+} MenuParticle;
 
-extern GlobalVariables globalVariables;
-extern GameState currentGameState;
-extern InGameState currentInGameState;
-
-void Enemy_UpdateMovement(f32 deltaTime);
-
-//~ Begin of Weapons
-void Weapons_Update(f32 deltaTime);
-void Projectile_UpdateMovement(f32 deltaTime);
-void Weapon_FireFireballRing(Vector2 position, u32 ownerID);
-void Weapon_Initialize(Weapon* w, WeaponType type);
-void Weapon_Upgrade(Weapon* w);
-//~ End of Weapons
-
-//~ Begin of Player
-struct ConnectionState;
-typedef struct ConnectionState ConnectionState;
-void Player_UpdateMovement(f32 deltaTime);
-void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr);
-void ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE, f32 weaponMult);
-void Player_RecalculateAttributes(void);
-void DrawStatsOverlay(void);
-//~ End of Player
-
-//~ Begin of Input
 typedef struct InputState {
     Vector2 movementDirection;
     bool quitApplication;
 } InputState;
 
+typedef struct UpgradeCandidate {
+    bool isRelic;
+    u8 type;
+} UpgradeCandidate;
+
+#include "connection/connection.h"
+
+//~ Centralized State Definitions
+typedef struct GlobalVariables {
+    Entity entities[MAX_ENTITY_AMOUNT];
+    Weapon playerWeapons[4];
+    Relic playerRelics[4];
+    PlayerAttributes playerAttributes[MAX_PLAYERS];
+
+    InputState currentInputState;
+    ConnectionState currentConnectionState;
+    GameState currentGameState;
+    InGameState currentInGameState;
+
+    char playerNames[MAX_PLAYERS][32];
+    char myNameInput[32];
+    char joinIpAddress[64];
+
+    f32 playerXP;
+    f32 xpToNextLevel;
+    u16 playerLevel;
+    f32 gameTime;
+
+    u32 spectatedPlayerID;
+
+    bool isChoosingUpgrade;
+    LevelUpOption upgradeOptions[3];
+    i32 pendingLevels;
+
+    MenuParticle menuParticles[MAX_MENU_PARTICLES];
+    bool particlesInitialized;
+} GlobalVariables;
+
+extern GlobalVariables globalVariables;
+
+//~ Begin of Enemy
+u32 Enemy_GetAlternativeTargetPlayerID(u32 deadPlayerID, u32 enemyIndex);
+void Enemy_UpdateMovement(f32 deltaTime);
+//~ End of Enemy
+
+//~ Begin of Input
 void Input_Update(InputState* state);
 //~ End of Input
 
+//~ Begin of Player
+void Player_ApplyLifesteal(ConnectionState* state, u32 enemyIndex, f32 damage, bool isAoE, f32 weaponMult);
+u32 Player_FindNextAlivePlayer(u32 currentSpectatedID, bool forward);
+bool Player_IsConnected(i32 playerID);
+void Player_RecalculateAttributes(void);
+void Player_UpdateAttributes(ConnectionState* state, PlayerAttributes attr);
+void Player_UpdateMovement(f32 deltaTime);
+//~ End of Player
+
 //~ Begin of Renderer
+bool Render_DrawCustomButton(Rectangle rect, const char* text, Color baseColor, Color hoverColor, Vector2 mousePos, f32 deltaTime, f32* animProgress);
+void Render_DrawCustomTextBox(Rectangle rect, char* textBuffer, i32 maxLen, bool* active, const char* label, Vector2 mousePos);
+void Render_DrawGameTimer(void);
+void Render_DrawHeart(Vector2 center, f32 size, Color color);
+void Render_DrawJoinInputScreen(Vector2 mousePos, f32 deltaTime);
+void Render_DrawLobby(Vector2 mousePos, f32 deltaTime);
+void Render_DrawMainMenu(Vector2 mousePos, f32 deltaTime);
+void Render_DrawStatsOverlay(void);
+void Render_DrawTombstone(Vector2 pos, const char* name, Color nameColor);
+void Render_DrawUpgradeCards(void);
+void Render_DrawXPBar(void);
 void Render_Entity(const Entity* entity);
 void Render_Map(void);
-void DrawGameTimer(void);
-void SpawnDamagePopup(Vector2 position, f32 damage, Color color);
+void Render_SpawnDamagePopup(Vector2 position, f32 damage, Color color);
+void Render_UpdateAndDrawMenuParticles(f32 deltaTime);
 //~ End of Renderer
+
+//~ Begin of Weapons
+void Weapon_ApplyUpgrade(i32 optionIndex);
+void Weapon_FireFireballRing(Vector2 position, u32 ownerID);
+void Weapon_GenerateUpgradeOptions(LevelUpOption options[3]);
+void Weapon_Initialize(Weapon* w, WeaponType type);
+void Weapon_ProjectileUpdateMovement(f32 deltaTime);
+void Weapon_Upgrade(Weapon* w);
+void Weapons_Update(f32 deltaTime);
+//~ End of Weapons

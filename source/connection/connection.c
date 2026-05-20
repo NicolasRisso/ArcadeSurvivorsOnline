@@ -1,3 +1,4 @@
+#include "main.h"
 #include "connection.h"
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
@@ -290,7 +291,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                             // Prediction: Ignore damage from ourselves (already applied)
                             if (damagePacket->header.playerIdentification != connectionState->localPlayerIdentification) {
                                 connectionState->remoteEntities[entityIndex].character.health -= damagePacket->damage;
-                                SpawnDamagePopup(connectionState->remoteEntities[entityIndex].character.position, damagePacket->damage, ORANGE);
+                                Render_SpawnDamagePopup(connectionState->remoteEntities[entityIndex].character.position, damagePacket->damage, ORANGE);
                             }
                             connectionState->remoteEntities[entityIndex].character.damageFlashTimer = 0.15f;
                         }
@@ -420,14 +421,13 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                 PacketNameUpdate* nameUpdate = (PacketNameUpdate*)receiveBuffer;
                 u32 targetID = nameUpdate->targetPlayerID;
                 u32 idx = (targetID - 1) % MAX_PLAYERS;
-                extern char playerNames[MAX_PLAYERS][32];
-                strncpy(playerNames[idx], nameUpdate->name, 31);
-                playerNames[idx][31] = '\0';
+                strncpy(globalVariables.playerNames[idx], nameUpdate->name, 31);
+                globalVariables.playerNames[idx][31] = '\0';
                 printf("LOBBY: Player %u updated name to %s\n", targetID, nameUpdate->name);
                 break;
             }
             case PACKET_START_GAME: {
-                currentGameState = STATE_IN_GAME;
+                globalVariables.currentGameState = STATE_IN_GAME;
                 printf("LOBBY: Game started authoritatively by host!\n");
                 break;
             }
@@ -491,7 +491,6 @@ void Network_SendDeathReport(ConnectionState* state) {
     if (!state->isConnected || state->pendingKillsCount == 0) return;
 
     f64 currentTime = GetTime();
-    // We send every tick now (no timer)
 
     // Send in batches of 128
     u32 batchCount = (state->pendingKillsCount > 128) ? 128 : state->pendingKillsCount;

@@ -1,8 +1,6 @@
 #ifndef CONNECTION_H
 #define CONNECTION_H
 
-#include "main.h"
-
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 12345
 #define HEARTBEAT_INTERVAL 5.0
@@ -11,7 +9,7 @@
 #define NETWORK_TPS 20.0
 #define NETWORK_UPDATE_INTERVAL (1.0 / NETWORK_TPS)
 
-typedef enum {
+typedef enum PacketType : u8 {
     PACKET_ID_REQUEST = 0,
     PACKET_ID_RESPONSE = 1,
     PACKET_HEARTBEAT = 2,
