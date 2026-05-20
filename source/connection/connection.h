@@ -78,6 +78,7 @@ typedef struct {
 typedef struct {
     PacketHeader header;
     f32 gameTime;
+    f32 difficulty;
     i32 teamLives;
     u32 count;
     RemotePlayerState players[MAX_REMOTE_PLAYERS];
@@ -97,10 +98,14 @@ typedef struct {
 } PacketEntitySpawn;
 
 typedef struct {
+    u16 entityIndex;
+    Vector2 position;
+} EntitySnapshotEntry;
+
+typedef struct {
     PacketHeader header;
-    u16 firstEntityIndex;
-    u16 count;
-    Vector2 positions[128]; 
+    u32 count;
+    EntitySnapshotEntry entries[128];
 } PacketEntitySnapshot;
 
 typedef struct {
@@ -208,6 +213,7 @@ typedef struct ConnectionState {
     f32 damageFlashTimer;
     f32 iframeTimer;
     f32 gameTime;
+    f32 difficulty;
     
     PlayerAttributes playerAttributes[MAX_REMOTE_PLAYERS];
     Entity remoteEntities[MAX_REMOTE_ENTITIES];

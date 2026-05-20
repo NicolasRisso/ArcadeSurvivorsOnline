@@ -46,6 +46,7 @@ bool Network_InitConnection(ConnectionState* connectionState, const char* ipAddr
     connectionState->damageFlashTimer = 0.0f;
     connectionState->iframeTimer = 0.0f;
     connectionState->gameTime = 0.0f;
+    connectionState->difficulty = 0.0f;
     connectionState->teamLives = 3;
 
     for (int i = 0; i < MAX_REMOTE_PLAYERS; i++) {
@@ -154,6 +155,7 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             case PACKET_WORLD_STATE: {
                 PacketWorldState* worldState = (PacketWorldState*)receiveBuffer;
                 connectionState->gameTime = worldState->gameTime;
+                connectionState->difficulty = worldState->difficulty;
                 connectionState->teamLives = worldState->teamLives;
                 for (u32 playerIndex = 0; playerIndex < worldState->count; playerIndex++) {
                     RemotePlayerState* remotePlayerState = &worldState->players[playerIndex];
@@ -299,16 +301,13 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
             case PACKET_ENTITY_SNAPSHOT: {
                 PacketEntitySnapshot* snapshot = (PacketEntitySnapshot*)receiveBuffer;
                 for (u32 i = 0; i < snapshot->count; i++) {
-                    u32 entityIndex = snapshot->firstEntityIndex + i;
-                    if (entityIndex >= MAX_REMOTE_ENTITIES) break;
+                    u32 entityIndex = snapshot->entries[i].entityIndex;
+                    if (entityIndex >= MAX_REMOTE_ENTITIES) continue;
 
                     if (connectionState->remoteEntities[entityIndex].entityType == ENTITY_CHARACTER && 
                         connectionState->remoteEntities[entityIndex].character.characterType == CHARACTER_ENEMY) {
                         
-                        // Ignore (0,0) placeholders from server
-                        if (snapshot->positions[i].x == 0.0f && snapshot->positions[i].y == 0.0f) continue;
-
-                        connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->positions[i];
+                        connectionState->remoteEntities[entityIndex].character.targetPosition = snapshot->entries[i].position;
                     }
                 }
                 break;

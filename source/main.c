@@ -950,8 +950,20 @@ void Enemy_UpdateMovement(f32 deltaTime) {
                 finalDirection = Vector2Normalize(finalDirection);
             }
 
-            entity->character.velocity.x = finalDirection.x * PLAYER_SPEED * 0.5f;
-            entity->character.velocity.y = finalDirection.y * PLAYER_SPEED * 0.5f;
+            f32 baseSpeed = 150.0f;
+            if (entity->character.enemyClass == ENEMY_CLASS_FAST) {
+                baseSpeed = 225.0f;
+            } else if (entity->character.enemyClass == ENEMY_CLASS_TANK) {
+                baseSpeed = 45.0f;
+            } else if (entity->character.enemyClass == ENEMY_CLASS_BOSS) {
+                baseSpeed = 150.0f;
+            }
+
+            f32 speedMultiplier = 1.0f + (currentConnectionState.difficulty / 20.0f) * 1.05f;
+            f32 actualSpeed = baseSpeed * speedMultiplier;
+
+            entity->character.velocity.x = finalDirection.x * actualSpeed;
+            entity->character.velocity.y = finalDirection.y * actualSpeed;
 
             // Diagnostic: Heartbeat every 3 seconds for active enemies
             static f32 lastHeartbeatTime = 0;
@@ -1235,8 +1247,7 @@ void Player_UpdateMovement(f32 deltaTime) {
                 enemy->character.health > 0) {
                 
                 if (CheckCollisionCircles(currentConnectionState.localPosition, PLAYER_RADIUS, enemy->character.position, PLAYER_RADIUS)) {
-                    f32 clientDifficulty = gameTime / 6.0f;
-                    f32 stat_mult = 1.0f + (clientDifficulty / 20.0f) * 1.25f;
+                    f32 stat_mult = 1.0f + (currentConnectionState.difficulty / 20.0f) * 1.25f;
                     
                     f32 baseDamage = 10.0f;
                     if (enemy->character.enemyClass == ENEMY_CLASS_BOSS) {
