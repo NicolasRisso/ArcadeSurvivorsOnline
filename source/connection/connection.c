@@ -9,7 +9,7 @@
 static SOCKET clientSocket = INVALID_SOCKET;
 static struct sockaddr_in serverAddress;
 
-bool Network_InitConnection(ConnectionState* connectionState) {
+bool Network_InitConnection(ConnectionState* connectionState, const char* ipAddress) {
     WSADATA windowsSocketData;
     if (WSAStartup(MAKEWORD(2, 2), &windowsSocketData) != 0) {
         printf("Winsock initialization failed\n");
@@ -29,7 +29,7 @@ bool Network_InitConnection(ConnectionState* connectionState) {
 
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, SERVER_IP, &serverAddress.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, ipAddress, &serverAddress.sin_addr) <= 0) {
         printf("Invalid address/ Address not supported\n");
         return false;
     }
@@ -412,9 +412,24 @@ void Network_UpdateConnection(ConnectionState* connectionState) {
                                 mask |= (1 << w);
                             }
                         }
-                        connectionState->remoteEntities[entityIndex].character.weaponsMask = mask;
+                         connectionState->remoteEntities[entityIndex].character.weaponsMask = mask;
                     }
                 }
+                break;
+            }
+            case PACKET_NAME_UPDATE: {
+                PacketNameUpdate* nameUpdate = (PacketNameUpdate*)receiveBuffer;
+                u32 targetID = nameUpdate->targetPlayerID;
+                u32 idx = (targetID - 1) % MAX_PLAYERS;
+                extern char playerNames[MAX_PLAYERS][32];
+                strncpy(playerNames[idx], nameUpdate->name, 31);
+                playerNames[idx][31] = '\0';
+                printf("LOBBY: Player %u updated name to %s\n", targetID, nameUpdate->name);
+                break;
+            }
+            case PACKET_START_GAME: {
+                currentGameState = STATE_IN_GAME;
+                printf("LOBBY: Game started authoritatively by host!\n");
                 break;
             }
         }
@@ -643,6 +658,31 @@ PlayerAttributes RecalculateAttributesFromRelics(const u8 relicLevels[7]) {
     return attr;
 }
 
+
+void Network_SendNameUpdate(ConnectionState* state, const char* name) {
+    if (!state->isConnected) return;
+
+    PacketNameUpdate packet;
+    packet.header.type = PACKET_NAME_UPDATE;
+    packet.header.playerIdentification = state->localPlayerIdentification;
+    packet.header.timestamp = GetTime();
+    packet.targetPlayerID = state->localPlayerIdentification;
+    strncpy(packet.name, name, 31);
+    packet.name[31] = '\0';
+
+    sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+}
+
+void Network_SendStartGame(ConnectionState* state) {
+    if (!state->isConnected) return;
+
+    PacketStartGame packet;
+    packet.header.type = PACKET_START_GAME;
+    packet.header.playerIdentification = state->localPlayerIdentification;
+    packet.header.timestamp = GetTime();
+
+    sendto(clientSocket, (char*)&packet, sizeof(packet), 0, (struct sockaddr*)&serverAddress, sizeof(serverAddress));
+}
 
 void Network_CloseConnection() {
     if (clientSocket != INVALID_SOCKET) {

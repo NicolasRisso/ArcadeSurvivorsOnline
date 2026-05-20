@@ -29,7 +29,9 @@ typedef enum {
     PACKET_XP_COLLECT = 14,
     PACKET_ATTRIBUTE_UPDATE = 15,
     PACKET_NOTIFICATION = 16,
-    PACKET_UPGRADE_UPDATE = 17
+    PACKET_UPGRADE_UPDATE = 17,
+    PACKET_NAME_UPDATE = 18,
+    PACKET_START_GAME = 19
 } PacketType;
 
 #define MAX_REMOTE_PLAYERS 4
@@ -171,6 +173,16 @@ typedef struct {
     u8 level;
 } PacketUpgradeUpdate;
 
+typedef struct {
+    PacketHeader header;
+    u32 targetPlayerID;
+    char name[32];
+} PacketNameUpdate;
+
+typedef struct {
+    PacketHeader header;
+} PacketStartGame;
+
 #pragma pack(pop)
 
 typedef struct {
@@ -214,8 +226,10 @@ typedef struct ConnectionState {
     i32 teamLives;
 } ConnectionState;
 
-bool Network_InitConnection(ConnectionState* state);
+bool Network_InitConnection(ConnectionState* state, const char* ipAddress);
 void Network_UpdateConnection(ConnectionState* state);
+void Network_SendNameUpdate(ConnectionState* state, const char* name);
+void Network_SendStartGame(ConnectionState* state);
 void Network_SendVelocity(ConnectionState* state, Vector2 velocity);
 void Network_SendDeathReport(ConnectionState* state);
 void Network_SendWeaponFire(ConnectionState* state, u8 weaponType, f32 damage, f32 radius, i32 extraParam);

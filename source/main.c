@@ -5,8 +5,17 @@
 GlobalVariables globalVariables = { 0 };
 InputState currentInputState = { 0 };
 ConnectionState currentConnectionState = { 0 };
-GameState currentGameState = STATE_IN_GAME;
+GameState currentGameState = STATE_MAIN_MENU;
 InGameState currentInGameState = IN_GAME_PLAYING;
+
+char playerNames[MAX_PLAYERS][32] = {
+    "Player 1",
+    "Player 2",
+    "Player 3",
+    "Player 4"
+};
+char myNameInput[32] = "Survivor";
+char joinIpAddress[64] = "127.0.0.1";
 
 f32 playerXP = 0.0f;
 f32 xpToNextLevel = 100.0f;
@@ -97,14 +106,330 @@ void GenerateUpgradeOptions(LevelUpOption options[3]);
 void ApplyUpgrade(int optionIndex);
 void DrawUpgradeCards(void);
 
+// --- Multiplayer & Lobby High-Fidelity UI Helpers ---
+
+bool IsPlayerConnected(int playerID) {
+    if (!currentConnectionState.isConnected) return false;
+    if ((int)currentConnectionState.localPlayerIdentification == playerID) return true;
+    if (playerID > 0 && playerID <= MAX_PLAYERS) {
+        Entity* ent = &currentConnectionState.remoteEntities[playerID];
+        if (ent->entityType == ENTITY_CHARACTER && ent->character.characterType == CHARACTER_PLAYER) {
+            return true;
+        }
+    }
+    return false;
+}
+
+typedef struct {
+    Vector2 position;
+    Vector2 velocity;
+    float size;
+    float alpha;
+    Color color;
+} MenuParticle;
+
+#define MAX_MENU_PARTICLES 80
+MenuParticle menuParticles[MAX_MENU_PARTICLES];
+bool particlesInitialized = false;
+
+void UpdateAndDrawMenuParticles(float deltaTime) {
+    if (!particlesInitialized) {
+        for (int i = 0; i < MAX_MENU_PARTICLES; i++) {
+            menuParticles[i].position = (Vector2){ (float)(rand() % SCREEN_WIDTH), (float)(rand() % SCREEN_HEIGHT) };
+            menuParticles[i].velocity = (Vector2){ (float)((rand() % 40) - 20) / 10.0f, (float)((rand() % 40) - 20) / 10.0f };
+            menuParticles[i].size = (float)((rand() % 6) + 2);
+            menuParticles[i].alpha = (float)(rand() % 100) / 100.0f * 0.4f + 0.1f;
+            
+            int colorIndex = rand() % 4;
+            if (colorIndex == 0) menuParticles[i].color = (Color){ 120, 220, 255, 255 }; // Neo cyan
+            else if (colorIndex == 1) menuParticles[i].color = (Color){ 255, 150, 200, 255 }; // Neo pink
+            else if (colorIndex == 2) menuParticles[i].color = (Color){ 180, 150, 255, 255 }; // Neo violet
+            else menuParticles[i].color = (Color){ 255, 230, 150, 255 }; // Neo gold
+        }
+        particlesInitialized = true;
+    }
+    
+    for (int i = 0; i < MAX_MENU_PARTICLES; i++) {
+        menuParticles[i].position.x += menuParticles[i].velocity.x * deltaTime * 10.0f;
+        menuParticles[i].position.y += menuParticles[i].velocity.y * deltaTime * 10.0f;
+        
+        if (menuParticles[i].position.x < 0) menuParticles[i].position.x += SCREEN_WIDTH;
+        if (menuParticles[i].position.x > SCREEN_WIDTH) menuParticles[i].position.x -= SCREEN_WIDTH;
+        if (menuParticles[i].position.y < 0) menuParticles[i].position.y += SCREEN_HEIGHT;
+        if (menuParticles[i].position.y > SCREEN_HEIGHT) menuParticles[i].position.y -= SCREEN_HEIGHT;
+        
+        float sizePulse = menuParticles[i].size + sinf(GetTime() + i) * 1.5f;
+        if (sizePulse < 1.0f) sizePulse = 1.0f;
+        
+        DrawCircleV(menuParticles[i].position, sizePulse + 3.0f, Fade(menuParticles[i].color, menuParticles[i].alpha * 0.3f));
+        DrawCircleV(menuParticles[i].position, sizePulse, Fade(menuParticles[i].color, menuParticles[i].alpha));
+    }
+}
+
+bool DrawCustomButton(Rectangle rect, const char* text, Color baseColor, Color hoverColor, Vector2 mousePos, float deltaTime, float* animProgress) {
+    bool hovered = CheckCollisionPointRec(mousePos, rect);
+    
+    float target = hovered ? 1.0f : 0.0f;
+    *animProgress = Lerp(*animProgress, target, deltaTime * 12.0f);
+    
+    float scale = 1.0f + (*animProgress * 0.04f);
+    float width = rect.width * scale;
+    float height = rect.height * scale;
+    float x = rect.x - (width - rect.width) / 2.0f;
+    float y = rect.y - (height - rect.height) / 2.0f;
+    
+    unsigned char r = (unsigned char)Lerp(baseColor.r, hoverColor.r, *animProgress);
+    unsigned char g = (unsigned char)Lerp(baseColor.g, hoverColor.g, *animProgress);
+    unsigned char b = (unsigned char)Lerp(baseColor.b, hoverColor.b, *animProgress);
+    unsigned char a = (unsigned char)Lerp(baseColor.a, hoverColor.a, *animProgress);
+    Color currentColor = (Color){ r, g, b, a };
+    
+    DrawRectangleRounded((Rectangle){ x + 4, y + 4, width, height }, 0.2f, 4, Fade(BLACK, 0.25f));
+    DrawRectangleRounded((Rectangle){ x, y, width, height }, 0.2f, 4, currentColor);
+    
+    Color borderHighlight = Fade(WHITE, 0.15f + (*animProgress * 0.15f));
+    DrawRectangleRoundedLines((Rectangle){ x, y, width, height }, 0.2f, 4, borderHighlight);
+    
+    int fontSize = 20;
+    int textWidth = MeasureText(text, fontSize);
+    Color textColor = hovered ? WHITE : (Color){ 230, 230, 240, 255 };
+    DrawText(text, x + (width - textWidth) / 2.0f, y + (height - fontSize) / 2.0f, fontSize, textColor);
+    
+    return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+}
+
+void DrawCustomTextBox(Rectangle rect, char* textBuffer, int maxLen, bool* active, const char* label, Vector2 mousePos) {
+    if (CheckCollisionPointRec(mousePos, rect)) {
+        SetMouseCursor(MOUSE_CURSOR_IBEAM);
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            *active = true;
+        }
+    } else {
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            *active = false;
+        }
+    }
+    
+    if (*active) {
+        int key = GetCharPressed();
+        while (key > 0) {
+            if ((key >= 32) && (key <= 125) && ((int)strlen(textBuffer) < maxLen - 1)) {
+                int len = strlen(textBuffer);
+                textBuffer[len] = (char)key;
+                textBuffer[len + 1] = '\0';
+            }
+            key = GetCharPressed();
+        }
+        
+        if (IsKeyPressed(KEY_BACKSPACE)) {
+            int len = strlen(textBuffer);
+            if (len > 0) {
+                textBuffer[len - 1] = '\0';
+            }
+        }
+    }
+    
+    DrawText(label, rect.x, rect.y - 20, 14, GRAY);
+    
+    Color boxBg = *active ? Fade(BLACK, 0.45f) : Fade(BLACK, 0.3f);
+    DrawRectangleRounded(rect, 0.15f, 4, boxBg);
+    
+    Color borderCol = *active ? SKYBLUE : Fade(WHITE, 0.15f);
+    DrawRectangleRoundedLines(rect, 0.15f, 4, borderCol);
+    
+    int fontSize = 18;
+    DrawText(textBuffer, rect.x + 12, rect.y + (rect.height - fontSize) / 2.0f, fontSize, WHITE);
+    
+    if (*active) {
+        if (((int)(GetTime() * 2.0f) % 2) == 0) {
+            int textWidth = MeasureText(textBuffer, fontSize);
+            DrawRectangle(rect.x + 12 + textWidth + 2, rect.y + (rect.height - 18) / 2.0f, 2, 18, SKYBLUE);
+        }
+    }
+}
+
+void DrawMainMenu(Vector2 mousePos, float deltaTime) {
+    float titleGlow = 0.5f + 0.5f * sinf(GetTime() * 2.0f);
+    int titleFontSize = 48;
+    const char* titleText = "ARCADE SURVIVORS ONLINE";
+    int titleWidth = MeasureText(titleText, titleFontSize);
+    
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f + 3, 90 + 3, titleFontSize, Fade(BLACK, 0.5f));
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 90, titleFontSize, Fade(GOLD, 0.8f + titleGlow * 0.2f));
+    
+    float cardWidth = 400.0f;
+    float cardHeight = 350.0f;
+    float cardX = (SCREEN_WIDTH - cardWidth) / 2.0f;
+    float cardY = 190.0f;
+    
+    DrawRectangleRounded((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(BLACK, 0.55f));
+    DrawRectangleRoundedLines((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(WHITE, 0.15f));
+    
+    static bool nameBoxActive = false;
+    DrawCustomTextBox((Rectangle){ cardX + 50, cardY + 40, 300, 40 }, myNameInput, 31, &nameBoxActive, "YOUR NAME", mousePos);
+    
+    static float hostAnim = 0.0f;
+    Rectangle hostRect = (Rectangle){ cardX + 50, cardY + 120, 300, 45 };
+    if (DrawCustomButton(hostRect, "HOST GAME", Fade(DARKGREEN, 0.6f), Fade(LIME, 0.8f), mousePos, deltaTime, &hostAnim)) {
+        printf("HOST: Spawning server...\n");
+        system("start python server/server.py");
+        
+        double startTime = GetTime();
+        while (GetTime() - startTime < 1.2) {
+            // Wait to ensure Python server binds
+        }
+        
+        if (Network_InitConnection(&currentConnectionState, "127.0.0.1")) {
+            Network_SendNameUpdate(&currentConnectionState, myNameInput);
+            currentGameState = STATE_LOBBY;
+        } else {
+            printf("HOST ERROR: Failed to connect to server.\n");
+        }
+    }
+    
+    static float joinAnim = 0.0f;
+    Rectangle joinRect = (Rectangle){ cardX + 50, cardY + 185, 300, 45 };
+    if (DrawCustomButton(joinRect, "JOIN GAME", Fade(BLUE, 0.6f), Fade(SKYBLUE, 0.8f), mousePos, deltaTime, &joinAnim)) {
+        currentGameState = STATE_JOIN_IP;
+    }
+    
+    static float exitAnim = 0.0f;
+    Rectangle exitRect = (Rectangle){ cardX + 50, cardY + 250, 300, 45 };
+    if (DrawCustomButton(exitRect, "EXIT TO DESKTOP", Fade(DARKGRAY, 0.6f), Fade(RED, 0.8f), mousePos, deltaTime, &exitAnim)) {
+        currentInputState.quitApplication = true;
+    }
+}
+
+void DrawJoinInputScreen(Vector2 mousePos, float deltaTime) {
+    int titleFontSize = 40;
+    const char* titleText = "JOIN MULTIPLAYER GAME";
+    int titleWidth = MeasureText(titleText, titleFontSize);
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 90, titleFontSize, SKYBLUE);
+    
+    float cardWidth = 450.0f;
+    float cardHeight = 320.0f;
+    float cardX = (SCREEN_WIDTH - cardWidth) / 2.0f;
+    float cardY = 180.0f;
+    
+    DrawRectangleRounded((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(BLACK, 0.55f));
+    DrawRectangleRoundedLines((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.08f, 4, Fade(WHITE, 0.15f));
+    
+    static bool nameBoxActive = false;
+    DrawCustomTextBox((Rectangle){ cardX + 50, cardY + 40, 350, 40 }, myNameInput, 31, &nameBoxActive, "YOUR NAME", mousePos);
+    
+    static bool ipBoxActive = false;
+    DrawCustomTextBox((Rectangle){ cardX + 50, cardY + 115, 350, 40 }, joinIpAddress, 63, &ipBoxActive, "SERVER IP ADDRESS", mousePos);
+    
+    static float connectAnim = 0.0f;
+    Rectangle connectRect = (Rectangle){ cardX + 50, cardY + 185, 350, 45 };
+    if (DrawCustomButton(connectRect, "CONNECT", Fade(SKYBLUE, 0.6f), Fade(BLUE, 0.8f), mousePos, deltaTime, &connectAnim)) {
+        printf("JOIN: Connecting to %s...\n", joinIpAddress);
+        if (Network_InitConnection(&currentConnectionState, joinIpAddress)) {
+            Network_SendNameUpdate(&currentConnectionState, myNameInput);
+            currentGameState = STATE_LOBBY;
+        } else {
+            printf("JOIN ERROR: Failed to connect to server at %s.\n", joinIpAddress);
+        }
+    }
+    
+    static float backAnim = 0.0f;
+    Rectangle backRect = (Rectangle){ cardX + 50, cardY + 245, 350, 45 };
+    if (DrawCustomButton(backRect, "BACK", Fade(DARKGRAY, 0.6f), Fade(GRAY, 0.8f), mousePos, deltaTime, &backAnim)) {
+        currentGameState = STATE_MAIN_MENU;
+    }
+}
+
+void DrawLobby(Vector2 mousePos, float deltaTime) {
+    int titleFontSize = 40;
+    const char* titleText = "MULTIPLAYER LOBBY ROOM";
+    int titleWidth = MeasureText(titleText, titleFontSize);
+    DrawText(titleText, (SCREEN_WIDTH - titleWidth) / 2.0f, 50, titleFontSize, GOLD);
+    
+    float cardWidth = 700.0f;
+    float cardHeight = 490.0f;
+    float cardX = (SCREEN_WIDTH - cardWidth) / 2.0f;
+    float cardY = 120.0f;
+    
+    DrawRectangleRounded((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.05f, 4, Fade(BLACK, 0.55f));
+    DrawRectangleRoundedLines((Rectangle){ cardX, cardY, cardWidth, cardHeight }, 0.05f, 4, Fade(WHITE, 0.15f));
+    
+    for (int i = 1; i <= 4; i++) {
+        float slotX = cardX + 40.0f;
+        float slotY = cardY + 25.0f + (i - 1) * (65.0f + 10.0f);
+        float slotWidth = cardWidth - 80.0f;
+        float slotHeight = 65.0f;
+        
+        Rectangle slotRec = (Rectangle){ slotX, slotY, slotWidth, slotHeight };
+        
+        if (IsPlayerConnected(i)) {
+            DrawRectangleRounded(slotRec, 0.15f, 4, Fade(BLACK, 0.45f));
+            DrawRectangleRoundedLines(slotRec, 0.15f, 4, Fade(WHITE, 0.2f));
+            
+            Color iconCol = RED;
+            if (i == 1) iconCol = GOLD;
+            else if (i == (int)currentConnectionState.localPlayerIdentification) iconCol = SKYBLUE;
+            
+            DrawCircle(slotX + 35, slotY + slotHeight/2.0f, 15, iconCol);
+            
+            const char* letter = (i == 1) ? "H" : TextFormat("%d", i);
+            int letterWidth = MeasureText(letter, 12);
+            DrawText(letter, slotX + 35 - letterWidth/2.0f, slotY + slotHeight/2.0f - 6, 12, BLACK);
+            
+            DrawText(playerNames[i - 1], slotX + 70, slotY + 22, 20, WHITE);
+            
+            if (i == 1) {
+                DrawText("HOST", slotX + slotWidth - 80, slotY + 25, 14, GOLD);
+            } else {
+                DrawText("READY", slotX + slotWidth - 80, slotY + 25, 14, GREEN);
+            }
+        } else {
+            float pulse = 0.4f + 0.2f * sinf(GetTime() * 3.0f + i);
+            
+            DrawRectangleRounded(slotRec, 0.15f, 4, Fade(BLACK, 0.2f));
+            DrawRectangleRoundedLines(slotRec, 0.15f, 4, Fade(WHITE, 0.08f));
+            
+            DrawCircle(slotX + 35, slotY + slotHeight/2.0f, 15, Fade(GRAY, pulse));
+            DrawText("Waiting for player...", slotX + 70, slotY + 24, 16, Fade(GRAY, pulse));
+        }
+    }
+    
+    static bool lobbyNameActive = false;
+    char tempName[32];
+    strcpy(tempName, myNameInput);
+    
+    DrawCustomTextBox((Rectangle){ cardX + 40, cardY + cardHeight - 80, 300, 40 }, myNameInput, 31, &lobbyNameActive, "CHANGE YOUR NAME", mousePos);
+    
+    if (strcmp(tempName, myNameInput) != 0) {
+        Network_SendNameUpdate(&currentConnectionState, myNameInput);
+        u32 localID = currentConnectionState.localPlayerIdentification;
+        if (localID > 0 && localID <= MAX_PLAYERS) {
+            strncpy(playerNames[localID - 1], myNameInput, 31);
+            playerNames[localID - 1][31] = '\0';
+        }
+    }
+    
+    if (currentConnectionState.localPlayerIdentification == 1) {
+        static float startBtnAnim = 0.0f;
+        Rectangle startBtnRect = (Rectangle){ cardX + cardWidth - 220, cardY + cardHeight - 80, 180, 40 };
+        
+        if (DrawCustomButton(startBtnRect, "START GAME", (Color){ 245, 130, 48, 255 }, (Color){ 253, 191, 111, 255 }, mousePos, deltaTime, &startBtnAnim)) {
+            Network_SendStartGame(&currentConnectionState);
+        }
+    } else {
+        float pulseAlpha = 0.5f + 0.3f * sinf(GetTime() * 4.0f);
+        DrawRectangleRounded((Rectangle){ cardX + cardWidth - 250, cardY + cardHeight - 80, 210, 40 }, 0.2f, 4, Fade(BLACK, 0.4f));
+        DrawRectangleRoundedLines((Rectangle){ cardX + cardWidth - 250, cardY + cardHeight - 80, 210, 40 }, 0.2f, 4, Fade(WHITE, 0.15f));
+        
+        int textWidth = MeasureText("Waiting for Host...", 14);
+        DrawText("Waiting for Host...", cardX + cardWidth - 250 + (210 - textWidth) / 2.0f, cardY + cardHeight - 80 + 13, 14, Fade(GOLD, pulseAlpha));
+    }
+}
+
 // --- Main Entry Point ---
 int main(void) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Arcade Survivors Online");
 
-    if (!Network_InitConnection(&currentConnectionState)) {
-        CloseWindow();
-        return 1;
-    }
+
 
     // Initialize player weapons and relics - Start with 1 random weapon
     for (int i = 0; i < 4; i++) {
@@ -127,124 +452,127 @@ int main(void) {
     SetTargetFPS(TARGET_FPS);
 
     while (!currentInputState.quitApplication) {
-        Network_UpdateConnection(&currentConnectionState);
+        if (currentGameState == STATE_LOBBY || currentGameState == STATE_IN_GAME) {
+            Network_UpdateConnection(&currentConnectionState);
+        }
         Input_Update(&currentInputState);
 
         f32 deltaTime = GetFrameTime();
+        Vector2 mousePos = GetMousePosition();
         
-        if (currentConnectionState.isConnected) {
-            gameTime += deltaTime;
-        } else {
-            gameTime = 0.0f;
-        }
-
-        // Update active notification
-        if (currentConnectionState.notificationCount > 0) {
-            ClientNotification* activeNotif = &currentConnectionState.notificationQueue[0];
-            activeNotif->timeElapsed += deltaTime;
-            if (activeNotif->timeElapsed >= activeNotif->duration) {
-                // Shift notifications queue forward
-                for (int i = 0; i < currentConnectionState.notificationCount - 1; i++) {
-                    currentConnectionState.notificationQueue[i] = currentConnectionState.notificationQueue[i + 1];
-                }
-                currentConnectionState.notificationCount--;
-                if (currentConnectionState.notificationCount > 0) {
-                    currentConnectionState.notificationQueue[0].timeElapsed = 0.0f;
-                }
-            }
-        }
-
-        // Predict and Interpolate movement and count down visual timers for characters
-        for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
-            Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
-            if (entity->entityType == ENTITY_CHARACTER) {
-                entity->character.position.x += entity->character.velocity.x * deltaTime;
-                entity->character.position.y += entity->character.velocity.y * deltaTime;
-                
-                entity->character.targetPosition.x += entity->character.velocity.x * deltaTime;
-                entity->character.targetPosition.y += entity->character.velocity.y * deltaTime;
-                
-                entity->character.position = Vector2Lerp(entity->character.position, entity->character.targetPosition, 0.25f);
-                
-                if (entity->character.damageFlashTimer > 0) {
-                    entity->character.damageFlashTimer -= deltaTime;
-                    if (entity->character.damageFlashTimer < 0) entity->character.damageFlashTimer = 0;
-                }
-            }
-        }
-        
-        // Count down local player visual & invulnerability timers
-        if (currentConnectionState.damageFlashTimer > 0) {
-            currentConnectionState.damageFlashTimer -= deltaTime;
-            if (currentConnectionState.damageFlashTimer < 0) currentConnectionState.damageFlashTimer = 0;
-        }
-        if (currentConnectionState.iframeTimer > 0) {
-            currentConnectionState.iframeTimer -= deltaTime;
-            if (currentConnectionState.iframeTimer < 0) currentConnectionState.iframeTimer = 0;
-        }
-        if (currentConnectionState.isConnected) {
-            currentConnectionState.gameTime += deltaTime;
-        }
-
-        Enemy_UpdateMovement(deltaTime);
-        Player_UpdateMovement(deltaTime);
-        Weapons_Update(deltaTime);
-        Projectile_UpdateMovement(deltaTime);
-        Network_SendDeathReport(&currentConnectionState);
-        Network_SendDamageBatch(&currentConnectionState);
-
-        // Update XP Crystals (Magnetization and Collection)
-        if (currentConnectionState.health > 0.0f && currentInGameState != IN_GAME_SPECTATING) {
-            for (i32 entityIndex = MAX_PLAYERS + MAX_ENEMIES; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
-                Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
-                if (entity->entityType == ENTITY_XP_CRYSTAL) {
-                    float dist = Vector2Distance(entity->xpCrystal.position, currentConnectionState.localPosition);
-                    
-                    if (entity->xpCrystal.isMagnetized || dist < MAGNET_RADIUS) {
-                        if (!entity->xpCrystal.isMagnetized) {
-                            entity->xpCrystal.isMagnetized = true;
-                            entity->xpCrystal.magnetizedTimer = 0.0f;
-                        }
-
-                        entity->xpCrystal.magnetizedTimer += deltaTime;
-                        float alpha = entity->xpCrystal.magnetizedTimer / 1.0f;
-                        if (alpha > 1.0f) alpha = 1.0f;
-                        float easedAlpha = alpha * alpha; // Ease-in
-
-                        // Ease-in movement towards player
-                        Vector2 dir = Vector2Normalize(Vector2Subtract(currentConnectionState.localPosition, entity->xpCrystal.position));
-                        float speed = easedAlpha * (PLAYER_SPEED * 1.5f);
-                        entity->xpCrystal.position.x += dir.x * speed * deltaTime;
-                        entity->xpCrystal.position.y += dir.y * speed * deltaTime;
-                    }
-                    
-                    if (dist < COLLECT_RADIUS) {
-                        // Collect!
-                        u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
-                        PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
-                        
-                        playerXP += entity->xpCrystal.xpValue * attr->xpGained;
-                        if (playerXP >= xpToNextLevel) {
-                            playerLevel++;
-                            playerXP -= xpToNextLevel;
-                            xpToNextLevel *= 1.2f; // Increase difficulty
-                            pendingLevels++;
-                        }
-                        Network_SendXPCollect(&currentConnectionState, entityIndex);
-                        entity->entityType = ENTITY_UNDEFINED; // Remove locally immediately
-                    }
-                }
-            }
-        }
-
-        // Trigger Upgrade Menu if pending levels
-        if (pendingLevels > 0 && !isChoosingUpgrade && currentInGameState != IN_GAME_SPECTATING) {
-            GenerateUpgradeOptions(upgradeOptions);
-            isChoosingUpgrade = true;
-            pendingLevels--;
-        }
-
         if (currentGameState == STATE_IN_GAME) {
+            if (currentConnectionState.isConnected) {
+                gameTime += deltaTime;
+            } else {
+                gameTime = 0.0f;
+            }
+
+            // Update active notification
+            if (currentConnectionState.notificationCount > 0) {
+                ClientNotification* activeNotif = &currentConnectionState.notificationQueue[0];
+                activeNotif->timeElapsed += deltaTime;
+                if (activeNotif->timeElapsed >= activeNotif->duration) {
+                    // Shift notifications queue forward
+                    for (int i = 0; i < currentConnectionState.notificationCount - 1; i++) {
+                        currentConnectionState.notificationQueue[i] = currentConnectionState.notificationQueue[i + 1];
+                    }
+                    currentConnectionState.notificationCount--;
+                    if (currentConnectionState.notificationCount > 0) {
+                        currentConnectionState.notificationQueue[0].timeElapsed = 0.0f;
+                    }
+                }
+            }
+
+            // Predict and Interpolate movement and count down visual timers for characters
+            for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
+                Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+                if (entity->entityType == ENTITY_CHARACTER) {
+                    entity->character.position.x += entity->character.velocity.x * deltaTime;
+                    entity->character.position.y += entity->character.velocity.y * deltaTime;
+                    
+                    entity->character.targetPosition.x += entity->character.velocity.x * deltaTime;
+                    entity->character.targetPosition.y += entity->character.velocity.y * deltaTime;
+                    
+                    entity->character.position = Vector2Lerp(entity->character.position, entity->character.targetPosition, 0.25f);
+                    
+                    if (entity->character.damageFlashTimer > 0) {
+                        entity->character.damageFlashTimer -= deltaTime;
+                        if (entity->character.damageFlashTimer < 0) entity->character.damageFlashTimer = 0;
+                    }
+                }
+            }
+            
+            // Count down local player visual & invulnerability timers
+            if (currentConnectionState.damageFlashTimer > 0) {
+                currentConnectionState.damageFlashTimer -= deltaTime;
+                if (currentConnectionState.damageFlashTimer < 0) currentConnectionState.damageFlashTimer = 0;
+            }
+            if (currentConnectionState.iframeTimer > 0) {
+                currentConnectionState.iframeTimer -= deltaTime;
+                if (currentConnectionState.iframeTimer < 0) currentConnectionState.iframeTimer = 0;
+            }
+            if (currentConnectionState.isConnected) {
+                currentConnectionState.gameTime += deltaTime;
+            }
+
+            Enemy_UpdateMovement(deltaTime);
+            Player_UpdateMovement(deltaTime);
+            Weapons_Update(deltaTime);
+            Projectile_UpdateMovement(deltaTime);
+            Network_SendDeathReport(&currentConnectionState);
+            Network_SendDamageBatch(&currentConnectionState);
+
+            // Update XP Crystals (Magnetization and Collection)
+            if (currentConnectionState.health > 0.0f && currentInGameState != IN_GAME_SPECTATING) {
+                for (i32 entityIndex = MAX_PLAYERS + MAX_ENEMIES; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
+                    Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+                    if (entity->entityType == ENTITY_XP_CRYSTAL) {
+                        float dist = Vector2Distance(entity->xpCrystal.position, currentConnectionState.localPosition);
+                        
+                        if (entity->xpCrystal.isMagnetized || dist < MAGNET_RADIUS) {
+                            if (!entity->xpCrystal.isMagnetized) {
+                                entity->xpCrystal.isMagnetized = true;
+                                entity->xpCrystal.magnetizedTimer = 0.0f;
+                            }
+
+                            entity->xpCrystal.magnetizedTimer += deltaTime;
+                            float alpha = entity->xpCrystal.magnetizedTimer / 1.0f;
+                            if (alpha > 1.0f) alpha = 1.0f;
+                            float easedAlpha = alpha * alpha; // Ease-in
+
+                            // Ease-in movement towards player
+                            Vector2 dir = Vector2Normalize(Vector2Subtract(currentConnectionState.localPosition, entity->xpCrystal.position));
+                            float speed = easedAlpha * (PLAYER_SPEED * 1.5f);
+                            entity->xpCrystal.position.x += dir.x * speed * deltaTime;
+                            entity->xpCrystal.position.y += dir.y * speed * deltaTime;
+                        }
+                        
+                        if (dist < COLLECT_RADIUS) {
+                            // Collect!
+                            u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                            PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+                            
+                            playerXP += entity->xpCrystal.xpValue * attr->xpGained;
+                            if (playerXP >= xpToNextLevel) {
+                                playerLevel++;
+                                playerXP -= xpToNextLevel;
+                                xpToNextLevel *= 1.2f; // Increase difficulty
+                                pendingLevels++;
+                            }
+                            Network_SendXPCollect(&currentConnectionState, entityIndex);
+                            entity->entityType = ENTITY_UNDEFINED; // Remove locally immediately
+                        }
+                    }
+                }
+            }
+
+            // Trigger Upgrade Menu if pending levels
+            if (pendingLevels > 0 && !isChoosingUpgrade && currentInGameState != IN_GAME_SPECTATING) {
+                GenerateUpgradeOptions(upgradeOptions);
+                isChoosingUpgrade = true;
+                pendingLevels--;
+            }
+
             bool isSpectating = (currentConnectionState.health <= 0.0f && currentConnectionState.teamLives <= 0);
             if (isSpectating) {
                 currentInGameState = IN_GAME_SPECTATING;
@@ -253,232 +581,247 @@ int main(void) {
             } else {
                 currentInGameState = IN_GAME_PLAYING;
             }
-        }
 
-        if (currentInGameState == IN_GAME_SPECTATING) {
-            bool currentSpectatedIsAlive = false;
-            if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
-                if (currentConnectionState.health > 0.0f) currentSpectatedIsAlive = true;
-            } else {
-                Entity* ent = &currentConnectionState.remoteEntities[spectatedPlayerID];
-                if (ent->entityType == ENTITY_CHARACTER &&
-                    ent->character.characterType == CHARACTER_PLAYER &&
-                    ent->character.health > 0.0f) {
-                    currentSpectatedIsAlive = true;
+            if (currentInGameState == IN_GAME_SPECTATING) {
+                bool currentSpectatedIsAlive = false;
+                if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
+                    if (currentConnectionState.health > 0.0f) currentSpectatedIsAlive = true;
+                } else {
+                    Entity* ent = &currentConnectionState.remoteEntities[spectatedPlayerID];
+                    if (ent->entityType == ENTITY_CHARACTER &&
+                        ent->character.characterType == CHARACTER_PLAYER &&
+                        ent->character.health > 0.0f) {
+                        currentSpectatedIsAlive = true;
+                    }
                 }
-            }
 
-            if (!currentSpectatedIsAlive || spectatedPlayerID == 0) {
-                spectatedPlayerID = FindNextAlivePlayer(currentConnectionState.localPlayerIdentification, true);
-            }
-
-            Vector2 targetPos = currentConnectionState.localPosition;
-            if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
-                targetPos = currentConnectionState.localPosition;
-            } else {
-                Entity* ent = &currentConnectionState.remoteEntities[spectatedPlayerID];
-                if (ent->entityType == ENTITY_CHARACTER && ent->character.characterType == CHARACTER_PLAYER) {
-                    targetPos = ent->character.position;
+                if (!currentSpectatedIsAlive || spectatedPlayerID == 0) {
+                    spectatedPlayerID = FindNextAlivePlayer(currentConnectionState.localPlayerIdentification, true);
                 }
+
+                Vector2 targetPos = currentConnectionState.localPosition;
+                if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
+                    targetPos = currentConnectionState.localPosition;
+                } else {
+                    Entity* ent = &currentConnectionState.remoteEntities[spectatedPlayerID];
+                    if (ent->entityType == ENTITY_CHARACTER && ent->character.characterType == CHARACTER_PLAYER) {
+                        targetPos = ent->character.position;
+                    }
+                }
+                camera.target = targetPos;
+            } else {
+                camera.target = currentConnectionState.localPosition;
+                spectatedPlayerID = currentConnectionState.localPlayerIdentification;
             }
-            camera.target = targetPos;
-        } else {
-            camera.target = currentConnectionState.localPosition;
-            spectatedPlayerID = currentConnectionState.localPlayerIdentification;
         }
 
         BeginDrawing();
-            ClearBackground(DARKGRAY);
-            BeginMode2D(camera);
-                Render_Map();
+            if (currentGameState == STATE_IN_GAME) {
+                ClearBackground(DARKGRAY);
+                BeginMode2D(camera);
+                    Render_Map();
 
-                // Update and Render Local Visual Effects
-                f32 frameDelta = GetFrameTime();
-                for (int i = 0; i < 128; i++) {
-                    if (currentConnectionState.localVisualEffects[i].active) {
-                        currentConnectionState.localVisualEffects[i].lifetime -= frameDelta;
-                        if (currentConnectionState.localVisualEffects[i].lifetime <= 0) {
-                            currentConnectionState.localVisualEffects[i].active = false;
-                        } else {
-                            f32 scale = currentConnectionState.localVisualEffects[i].lifetime / 0.5f;
-                            DrawCircleV(currentConnectionState.localVisualEffects[i].position, currentConnectionState.localVisualEffects[i].radius * (1.0f - scale), Fade(ORANGE, scale));
-                            DrawCircleV(currentConnectionState.localVisualEffects[i].position, (currentConnectionState.localVisualEffects[i].radius * 0.6f) * (1.0f - scale), Fade(YELLOW, scale));
-                        }
-                    }
-                }
-
-                // Update and Render Local Damage Popups
-                for (int i = 0; i < 256; i++) {
-                    Entity* popupEnt = &currentConnectionState.localDamagePopups[i];
-                    if (popupEnt->entityType == ENTITY_DAMAGE_POPUP) {
-                        DamagePopup* popup = &popupEnt->damagePopup;
-                        popup->lifetime += frameDelta;
-                        if (popup->lifetime >= 0.7f) {
-                            popupEnt->entityType = ENTITY_UNDEFINED;
-                        } else {
-                            popup->position.y -= frameDelta * 40.0f;
-                            
-                            f32 t = popup->lifetime;
-                            f32 scale = 1.0f;
-                            f32 alpha = 1.0f;
-                            if (t <= 0.2f) {
-                                scale = 1.0f + (t / 0.2f) * 0.2f;
-                                alpha = 1.0f;
+                    // Update and Render Local Visual Effects
+                    f32 frameDelta = GetFrameTime();
+                    for (int i = 0; i < 128; i++) {
+                        if (currentConnectionState.localVisualEffects[i].active) {
+                            currentConnectionState.localVisualEffects[i].lifetime -= frameDelta;
+                            if (currentConnectionState.localVisualEffects[i].lifetime <= 0) {
+                                currentConnectionState.localVisualEffects[i].active = false;
                             } else {
-                                scale = 1.2f * (1.0f - (t - 0.2f) / 0.5f);
-                                alpha = 1.0f - (t - 0.2f) / 0.5f;
-                            }
-                            
-                            if (scale < 0.0f) scale = 0.0f;
-                            if (alpha < 0.0f) alpha = 0.0f;
-                            if (alpha > 1.0f) alpha = 1.0f;
-                            
-                            int baseFontSize = 18;
-                            int currentFontSize = (int)(baseFontSize * scale);
-                            if (currentFontSize > 0) {
-                                const char* dmgText = TextFormat("%.0f", popup->damageValue);
-                                int textWidth = MeasureText(dmgText, currentFontSize);
-                                DrawText(dmgText, (int)(popup->position.x - textWidth / 2), (int)(popup->position.y - currentFontSize / 2), currentFontSize, Fade(popup->color, alpha));
+                                f32 scale = currentConnectionState.localVisualEffects[i].lifetime / 0.5f;
+                                DrawCircleV(currentConnectionState.localVisualEffects[i].position, currentConnectionState.localVisualEffects[i].radius * (1.0f - scale), Fade(ORANGE, scale));
+                                DrawCircleV(currentConnectionState.localVisualEffects[i].position, (currentConnectionState.localVisualEffects[i].radius * 0.6f) * (1.0f - scale), Fade(YELLOW, scale));
                             }
                         }
                     }
-                }
 
-                for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
-                    const Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
-                    if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_PLAYER) {
-                        // Draw Death Aura for remote players if alive
-                        if (entity->character.health > 0.0f && (entity->character.weaponsMask & (1 << (WEAPON_DEATH_AURA - 1)))) {
-                            u32 remoteID = entityIndex;
-                            u32 remoteIndex = (remoteID - 1) % MAX_REMOTE_PLAYERS;
-                            f32 remoteSizeMult = currentConnectionState.playerAttributes[remoteIndex].size;
-                            u8 auraLevel = entity->character.weaponLevels[WEAPON_DEATH_AURA - 1];
-                            f32 baseAuraRadius = AURA_RADIUS;
-                            if (auraLevel > 1) {
-                                baseAuraRadius += 15.0f * (auraLevel - 1);
+                    // Update and Render Local Damage Popups
+                    for (int i = 0; i < 256; i++) {
+                        Entity* popupEnt = &currentConnectionState.localDamagePopups[i];
+                        if (popupEnt->entityType == ENTITY_DAMAGE_POPUP) {
+                            DamagePopup* popup = &popupEnt->damagePopup;
+                            popup->lifetime += frameDelta;
+                            if (popup->lifetime >= 0.7f) {
+                                popupEnt->entityType = ENTITY_UNDEFINED;
+                            } else {
+                                popup->position.y -= frameDelta * 40.0f;
+                                
+                                f32 t = popup->lifetime;
+                                f32 scale = 1.0f;
+                                f32 alpha = 1.0f;
+                                if (t <= 0.2f) {
+                                    scale = 1.0f + (t / 0.2f) * 0.2f;
+                                    alpha = 1.0f;
+                                } else {
+                                    scale = 1.2f * (1.0f - (t - 0.2f) / 0.5f);
+                                    alpha = 1.0f - (t - 0.2f) / 0.5f;
+                                }
+                                
+                                if (scale < 0.0f) scale = 0.0f;
+                                if (alpha < 0.0f) alpha = 0.0f;
+                                if (alpha > 1.0f) alpha = 1.0f;
+                                
+                                int baseFontSize = 18;
+                                int currentFontSize = (int)(baseFontSize * scale);
+                                if (currentFontSize > 0) {
+                                    const char* dmgText = TextFormat("%.0f", popup->damageValue);
+                                    int textWidth = MeasureText(dmgText, currentFontSize);
+                                    DrawText(dmgText, (int)(popup->position.x - textWidth / 2), (int)(popup->position.y - currentFontSize / 2), currentFontSize, Fade(popup->color, alpha));
+                                }
                             }
-                            f32 currentAuraRadius = baseAuraRadius * remoteSizeMult;
-                            DrawCircleLinesV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.3f));
-                            DrawCircleV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.1f));
                         }
                     }
-                    Render_Entity(entity);
-                }
 
-                if (currentConnectionState.isConnected) {
-                    if (currentConnectionState.health <= 0.0f) {
-                        DrawTombstone(currentConnectionState.localPosition, TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), BLUE);
+                    for (i32 entityIndex = 0; entityIndex < MAX_REMOTE_ENTITIES; entityIndex++) {
+                        const Entity* entity = &currentConnectionState.remoteEntities[entityIndex];
+                        if (entity->entityType == ENTITY_CHARACTER && entity->character.characterType == CHARACTER_PLAYER) {
+                            // Draw Death Aura for remote players if alive
+                            if (entity->character.health > 0.0f && (entity->character.weaponsMask & (1 << (WEAPON_DEATH_AURA - 1)))) {
+                                u32 remoteID = entityIndex;
+                                u32 remoteIndex = (remoteID - 1) % MAX_REMOTE_PLAYERS;
+                                f32 remoteSizeMult = currentConnectionState.playerAttributes[remoteIndex].size;
+                                u8 auraLevel = entity->character.weaponLevels[WEAPON_DEATH_AURA - 1];
+                                f32 baseAuraRadius = AURA_RADIUS;
+                                if (auraLevel > 1) {
+                                    baseAuraRadius += 15.0f * (auraLevel - 1);
+                                }
+                                f32 currentAuraRadius = baseAuraRadius * remoteSizeMult;
+                                DrawCircleLinesV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.3f));
+                                DrawCircleV(entity->character.position, currentAuraRadius, Fade(BLACK, 0.1f));
+                            }
+                        }
+                        Render_Entity(entity);
+                    }
+
+                    if (currentConnectionState.isConnected) {
+                        u32 localID = currentConnectionState.localPlayerIdentification;
+                        u32 idx = (localID - 1) % MAX_PLAYERS;
+                        if (currentConnectionState.health <= 0.0f) {
+                            DrawTombstone(currentConnectionState.localPosition, playerNames[idx], BLUE);
+                        } else {
+                            DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
+                            
+                            // Draw local player high-frequency pulse damage flash if timer is active
+                            if (currentConnectionState.damageFlashTimer > 0) {
+                                f32 flashAlpha = (sinf(currentConnectionState.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
+                                if (flashAlpha > 0.0f) {
+                                    DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
+                                }
+                            }
+                            
+                            int textWidth = MeasureText(playerNames[idx], 12);
+                            DrawText(playerNames[idx], currentConnectionState.localPosition.x - textWidth / 2, currentConnectionState.localPosition.y - 40, 12, BLUE);
+                            
+                            // Draw local player's death aura
+                            u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
+                            PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
+                            for (int i = 0; i < 4; i++) {
+                                if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
+                                    f32 currentAuraRadius = globalVariables.playerWeapons[i].stats.size * attr->size;
+                                    DrawCircleLinesV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.3f));
+                                    DrawCircleV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.1f));
+                                    break;
+                                }
+                            }
+                        }
                     } else {
-                        DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, BLUE);
-                        
-                        // Draw local player high-frequency pulse damage flash if timer is active
-                        if (currentConnectionState.damageFlashTimer > 0) {
-                            f32 flashAlpha = (sinf(currentConnectionState.damageFlashTimer * 75.0f) > 0.0f) ? 0.7f : 0.0f;
-                            if (flashAlpha > 0.0f) {
-                                DrawCircleV(currentConnectionState.localPosition, PLAYER_RADIUS, Fade(WHITE, flashAlpha));
-                            }
-                        }
-                        
-                        DrawText(TextFormat("ME (ID: %u)", currentConnectionState.localPlayerIdentification), currentConnectionState.localPosition.x - 30, currentConnectionState.localPosition.y - 40, 12, BLUE);
-                        
-                        // Draw local player's death aura
-                        u32 localIndex = (currentConnectionState.localPlayerIdentification - 1) % MAX_REMOTE_PLAYERS;
-                        PlayerAttributes* attr = &currentConnectionState.playerAttributes[localIndex];
-                        for (int i = 0; i < 4; i++) {
-                            if (globalVariables.playerWeapons[i].type == WEAPON_DEATH_AURA) {
-                                f32 currentAuraRadius = globalVariables.playerWeapons[i].stats.size * attr->size;
-                                DrawCircleLinesV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.3f));
-                                DrawCircleV(currentConnectionState.localPosition, currentAuraRadius, Fade(BLACK, 0.1f));
-                                break;
-                            }
-                        }
+                        DrawText("Searching for server...", currentConnectionState.localPosition.x - 60, currentConnectionState.localPosition.y, 20, WHITE);
                     }
+                EndMode2D();
+                
+                // UI Overlay
+                DrawXPBar();
+                DrawGameTimer();
+                if (isChoosingUpgrade) DrawUpgradeCards();
+                if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
+
+                // Draw glassmorphic spectator panel at bottom center if spectating
+                if (currentInGameState == IN_GAME_SPECTATING) {
+                    float panelWidth = 400.0f;
+                    float panelHeight = 80.0f;
+                    float panelX = (SCREEN_WIDTH - panelWidth) / 2.0f;
+                    float panelY = SCREEN_HEIGHT - panelHeight - 40.0f;
+                    
+                    // Glassmorphic background
+                    DrawRectangleRounded((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(BLACK, 0.6f));
+                    DrawRectangleRoundedLines((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(WHITE, 0.2f));
+                    
+                    // Draw a red "SPECTATING" pulsing tag
+                    float pulse = 0.5f + 0.5f * sinf(GetTime() * 4.0f);
+                    DrawText("SPECTATING", panelX + (panelWidth - MeasureText("SPECTATING", 14)) / 2.0f, panelY + 12, 14, Fade(RED, 0.7f + 0.3f * pulse));
+                    
+                    // Draw the current player spectated name
+                    u32 sIdx = (spectatedPlayerID - 1) % MAX_PLAYERS;
+                    const char* targetName = playerNames[sIdx];
+                    if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
+                        targetName = TextFormat("%s (YOU)", playerNames[sIdx]);
+                    }
+                    int nameSize = 22;
+                    DrawText(targetName, panelX + (panelWidth - MeasureText(targetName, nameSize)) / 2.0f, panelY + 32, nameSize, WHITE);
+                    
+                    // Draw left and right cycling arrows and keys
+                    DrawText("< A", panelX + 30, panelY + 35, 16, GRAY);
+                    DrawText("D >", panelX + panelWidth - 30 - MeasureText("D >", 16), panelY + 35, 16, GRAY);
+                    
+                    DrawText("Press [TAB] to view stats", panelX + (panelWidth - MeasureText("Press [TAB] to view stats", 10)) / 2.0f, panelY + 60, 10, LIGHTGRAY);
+                }
+
+                DrawFPS(10, 10);
+
+                // Draw active notification
+                if (currentConnectionState.notificationCount > 0) {
+                    ClientNotification* activeNotif = &currentConnectionState.notificationQueue[0];
+                    f32 flashSpeed = activeNotif->flashDuration;
+                    f32 alpha = 1.0f;
+                    if (flashSpeed > 0.001f) {
+                        f32 progress = activeNotif->timeElapsed / flashSpeed;
+                        f32 angle = progress * 2.0f * 3.14159265f - (3.14159265f / 2.0f);
+                        alpha = 0.5f + 0.5f * sinf(angle);
+                    }
+                    
+                    int fontSize = 36;
+                    int textWidth = MeasureText(activeNotif->message, fontSize);
+                    int posX = (SCREEN_WIDTH - textWidth) / 2;
+                    int posY = 150;
+                    
+                    DrawRectangle(0, posY - 10, SCREEN_WIDTH, fontSize + 20, Fade(BLACK, alpha * 0.4f));
+                    DrawText(activeNotif->message, posX + 2, posY + 2, fontSize, Fade(BLACK, alpha * 0.6f));
+                    DrawText(activeNotif->message, posX, posY, fontSize, Fade(activeNotif->color, alpha));
+                }
+                
+                if (!currentConnectionState.isConnected) {
+                    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
+                    DrawText("CONNECTING TO SERVER...", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, WHITE);
+                    DrawText(TextFormat("Target IP: %s:%d", joinIpAddress, SERVER_PORT), SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2 + 40, 10, GRAY);
                 } else {
-                    DrawText("Searching for server...", currentConnectionState.localPosition.x - 60, currentConnectionState.localPosition.y, 20, WHITE);
+                    DrawText("CONNECTED", 10, 30, 20, GREEN);
+                    
+                    // Draw local health bar
+                    f32 healthPercent = currentConnectionState.health / currentConnectionState.maxHealth;
+                    if (healthPercent < 0.0f) healthPercent = 0.0f;
+                    DrawRectangle(10, 60, 200, 20, DARKGRAY);
+                    DrawRectangle(10, 60, (int)(200 * healthPercent), 20, RED);
+                    DrawRectangleLines(10, 60, 200, 20, BLACK);
+                    DrawText(TextFormat("%.0f / %.0f", currentConnectionState.health, currentConnectionState.maxHealth), 70, 65, 10, WHITE);
+                    
+                    // Draw lives counter next to the health bar
+                    DrawHeart((Vector2){ 235, 70 }, 10, RED);
+                    DrawText(TextFormat("x %d", currentConnectionState.teamLives), 255, 62, 16, WHITE);
                 }
-            EndMode2D();
-            
-            // UI Overlay
-            DrawXPBar();
-            DrawGameTimer();
-            if (isChoosingUpgrade) DrawUpgradeCards();
-            if (IsKeyDown(KEY_TAB)) DrawStatsOverlay();
-
-            // Draw glassmorphic spectator panel at bottom center if spectating
-            if (currentInGameState == IN_GAME_SPECTATING) {
-                float panelWidth = 400.0f;
-                float panelHeight = 80.0f;
-                float panelX = (SCREEN_WIDTH - panelWidth) / 2.0f;
-                float panelY = SCREEN_HEIGHT - panelHeight - 40.0f;
-                
-                // Glassmorphic background
-                DrawRectangleRounded((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(BLACK, 0.6f));
-                DrawRectangleRoundedLines((Rectangle){ panelX, panelY, panelWidth, panelHeight }, 0.15f, 4, Fade(WHITE, 0.2f));
-                
-                // Draw a red "SPECTATING" pulsing tag
-                float pulse = 0.5f + 0.5f * sinf(GetTime() * 4.0f);
-                DrawText("SPECTATING", panelX + (panelWidth - MeasureText("SPECTATING", 14)) / 2.0f, panelY + 12, 14, Fade(RED, 0.7f + 0.3f * pulse));
-                
-                // Draw the current player spectated name
-                const char* targetName = "";
-                if (spectatedPlayerID == currentConnectionState.localPlayerIdentification) {
-                    targetName = TextFormat("Player %u (YOU)", spectatedPlayerID);
-                } else {
-                    targetName = TextFormat("Player %u", spectatedPlayerID);
-                }
-                int nameSize = 22;
-                DrawText(targetName, panelX + (panelWidth - MeasureText(targetName, nameSize)) / 2.0f, panelY + 32, nameSize, WHITE);
-                
-                // Draw left and right cycling arrows and keys
-                DrawText("< A", panelX + 30, panelY + 35, 16, GRAY);
-                DrawText("D >", panelX + panelWidth - 30 - MeasureText("D >", 16), panelY + 35, 16, GRAY);
-                
-                DrawText("Press [TAB] to view stats", panelX + (panelWidth - MeasureText("Press [TAB] to view stats", 10)) / 2.0f, panelY + 60, 10, LIGHTGRAY);
-            }
-
-            DrawFPS(10, 10);
-
-            // Draw active notification
-            if (currentConnectionState.notificationCount > 0) {
-                ClientNotification* activeNotif = &currentConnectionState.notificationQueue[0];
-                f32 flashSpeed = activeNotif->flashDuration;
-                f32 alpha = 1.0f;
-                if (flashSpeed > 0.001f) {
-                    f32 progress = activeNotif->timeElapsed / flashSpeed;
-                    f32 angle = progress * 2.0f * 3.14159265f - (3.14159265f / 2.0f);
-                    alpha = 0.5f + 0.5f * sinf(angle);
-                }
-                
-                int fontSize = 36;
-                int textWidth = MeasureText(activeNotif->message, fontSize);
-                int posX = (SCREEN_WIDTH - textWidth) / 2;
-                int posY = 150;
-                
-                // Draw a subtle elegant semi-transparent black banner across the screen
-                DrawRectangle(0, posY - 10, SCREEN_WIDTH, fontSize + 20, Fade(BLACK, alpha * 0.4f));
-                
-                // Draw premium text with drop shadow
-                DrawText(activeNotif->message, posX + 2, posY + 2, fontSize, Fade(BLACK, alpha * 0.6f));
-                DrawText(activeNotif->message, posX, posY, fontSize, Fade(activeNotif->color, alpha));
-            }
-            if (!currentConnectionState.isConnected) {
-                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
-                DrawText("CONNECTING TO SERVER...", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, WHITE);
-                DrawText(TextFormat("Target IP: %s:%d", SERVER_IP, SERVER_PORT), SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2 + 40, 10, GRAY);
             } else {
-                DrawText("CONNECTED", 10, 30, 20, GREEN);
+                ClearBackground((Color){ 10, 12, 18, 255 });
+                UpdateAndDrawMenuParticles(deltaTime);
                 
-                // Draw local health bar
-                f32 healthPercent = currentConnectionState.health / currentConnectionState.maxHealth;
-                if (healthPercent < 0.0f) healthPercent = 0.0f;
-                DrawRectangle(10, 60, 200, 20, DARKGRAY);
-                DrawRectangle(10, 60, (int)(200 * healthPercent), 20, RED);
-                DrawRectangleLines(10, 60, 200, 20, BLACK);
-                DrawText(TextFormat("%.0f / %.0f", currentConnectionState.health, currentConnectionState.maxHealth), 70, 65, 10, WHITE);
+                if (currentGameState == STATE_MAIN_MENU) {
+                    DrawMainMenu(mousePos, deltaTime);
+                } else if (currentGameState == STATE_JOIN_IP) {
+                    DrawJoinInputScreen(mousePos, deltaTime);
+                } else if (currentGameState == STATE_LOBBY) {
+                    DrawLobby(mousePos, deltaTime);
+                }
                 
-                // Draw lives counter next to the health bar
-                DrawHeart((Vector2){ 235, 70 }, 10, RED);
-                DrawText(TextFormat("x %d", currentConnectionState.teamLives), 255, 62, 16, WHITE);
+                DrawFPS(10, 10);
             }
         EndDrawing();
     }
@@ -1044,11 +1387,14 @@ void Render_Entity(const Entity* entity) {
         case ENTITY_CHARACTER:
             if (entity->character.characterType == CHARACTER_PLAYER) {
                 u32 playerID = (u32)(entity - currentConnectionState.remoteEntities);
+                u32 idx = (playerID - 1) % MAX_PLAYERS;
+                const char* displayName = playerNames[idx];
                 if (entity->character.health <= 0.0f) {
-                    DrawTombstone(entity->character.position, TextFormat("PLAYER %u", playerID), MAROON);
+                    DrawTombstone(entity->character.position, displayName, MAROON);
                 } else {
                     DrawCircleV(entity->character.position, PLAYER_RADIUS, RED);
-                    DrawText(TextFormat("PLAYER %u", playerID), entity->character.position.x - 30, entity->character.position.y - 40, 10, MAROON);
+                    int textWidth = MeasureText(displayName, 12);
+                    DrawText(displayName, entity->character.position.x - textWidth / 2, entity->character.position.y - 40, 12, MAROON);
                     
                     // Draw remote player high-frequency pulse damage flash if timer is active
                     if (entity->character.damageFlashTimer > 0) {

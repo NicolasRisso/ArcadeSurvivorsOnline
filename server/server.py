@@ -36,6 +36,8 @@ PACKET_XP_COLLECT = 14
 PACKET_ATTRIBUTE_UPDATE = 15
 PACKET_NOTIFICATION = 16
 PACKET_UPGRADE_UPDATE = 17
+PACKET_NAME_UPDATE = 18
+PACKET_START_GAME = 19
 
 # Projectile Types
 PROJECTILE_UNDEFINED = 0
@@ -135,6 +137,8 @@ XP_COLLECT_FORMAT = HEADER_FORMAT + "I"
 ATTRIBUTE_UPDATE_FORMAT = HEADER_FORMAT + "fffffff"
 NOTIFICATION_FORMAT = HEADER_FORMAT + "64sBBBffB"
 UPGRADE_UPDATE_FORMAT = HEADER_FORMAT + "BBB"
+PACKET_NAME_UPDATE_FORMAT = HEADER_FORMAT + "I32s"
+PACKET_START_GAME_FORMAT = HEADER_FORMAT
 
 class Server:
     def __init__(self):
@@ -158,6 +162,7 @@ class Server:
         self.last_boss_spawn_cycle = -1
         self.is_swarm_active = False
         self.team_lives = 3
+        self.game_started = False
         print(f"Server started on {SERVER_IP}:{SERVER_PORT}")
 
     def log(self, message):
@@ -351,7 +356,7 @@ class Server:
                     self.broadcast_despawn(index)
 
     def update_spawner(self, current_time):
-        if not self.players:
+        if not self.players or not self.game_started:
             self.start_time = None
             self.difficulty = 0.0
             self.last_swarm_warning_cycle = -1
@@ -517,13 +522,26 @@ class Server:
                     "relic_levels": [0, 0, 0, 0, 0, 0, 0],
                     "attributes": (100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0),
                     "health": 100.0,
-                    "iframe_until": 0.0
+                    "iframe_until": 0.0,
+                    "name": f"Player {newIdentification}"
                 }
                 print(f"New player {newIdentification} connected from {address}")
             
             player = self.players[address]
             identificationResponse = struct.pack(IDENTIFICATION_RESPONSE_FORMAT, PACKET_ID_RESPONSE, player["identification"], packetTimestamp)
             self.serverSocket.sendto(identificationResponse, address)
+            
+            # Send current name of all players to this player
+            for other_addr, other_player in self.players.items():
+                name_bytes = other_player["name"].encode('utf-8')[:31].ljust(32, b'\0')
+                packet = struct.pack(PACKET_NAME_UPDATE_FORMAT, PACKET_NAME_UPDATE, other_player["identification"], time.time(), other_player["identification"], name_bytes)
+                self.serverSocket.sendto(packet, address)
+
+            # Broadcast new player's name to everyone
+            name_bytes = player["name"].encode('utf-8')[:31].ljust(32, b'\0')
+            packet = struct.pack(PACKET_NAME_UPDATE_FORMAT, PACKET_NAME_UPDATE, player["identification"], time.time(), player["identification"], name_bytes)
+            for addr in self.players:
+                self.serverSocket.sendto(packet, addr)
             
             # Send current world entities to the new player
             for eIndex in self.entities:
@@ -876,6 +894,34 @@ class Server:
                             del self.entities[crystalIndex]
                             self.broadcast_despawn(crystalIndex)
 
+        elif packetType == PACKET_NAME_UPDATE:
+            if address in self.players:
+                if len(data) >= struct.calcsize(PACKET_NAME_UPDATE_FORMAT):
+                    _, _, _, targetPlayerID, name_bytes = struct.unpack(PACKET_NAME_UPDATE_FORMAT, data[:struct.calcsize(PACKET_NAME_UPDATE_FORMAT)])
+                    name = name_bytes.decode('utf-8', errors='ignore').split('\x00')[0]
+                    self.players[address]["name"] = name
+                    print(f"LOBBY: Player {playerIdentification} updated name to {name}")
+                    
+                    # Broadcast the name update to everyone
+                    name_bytes_padded = name.encode('utf-8')[:31].ljust(32, b'\0')
+                    packet = struct.pack(PACKET_NAME_UPDATE_FORMAT, PACKET_NAME_UPDATE, playerIdentification, time.time(), playerIdentification, name_bytes_padded)
+                    for addr in self.players:
+                        self.serverSocket.sendto(packet, addr)
+
+        elif packetType == PACKET_START_GAME:
+            if address in self.players:
+                # Check if host (player ID == 1)
+                player = self.players[address]
+                if player["identification"] == 1:
+                    print("LOBBY: Host started the game!")
+                    self.game_started = True
+                    self.start_time = time.time()
+                    
+                    # Broadcast start game to all connected clients
+                    packet = struct.pack(PACKET_START_GAME_FORMAT, PACKET_START_GAME, player["identification"], time.time())
+                    for addr in self.players:
+                        self.serverSocket.sendto(packet, addr)
+
 
     def spawn_projectile(self, entType, projType, x, y, vx, vy, ownerID, damage=0, radius=0, extra=0):
         eIndex = self.nextEntityIndex
@@ -935,7 +981,7 @@ class Server:
             self.serverSocket.sendto(packet, address)
 
     def update_events(self, current_time):
-        if not self.players or self.start_time is None:
+        if not self.players or not self.game_started or self.start_time is None:
             return
         
         elapsed = current_time - self.start_time

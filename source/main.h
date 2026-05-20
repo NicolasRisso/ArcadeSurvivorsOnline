@@ -67,8 +67,12 @@ typedef struct u16Range { u16 minimum; u16 maximum; } u16Range;
 //~ Begin of Enums
 typedef enum GameState {
     STATE_MAIN_MENU = 0,
-    STATE_IN_GAME = 1
+    STATE_JOIN_IP = 1,
+    STATE_LOBBY = 2,
+    STATE_IN_GAME = 3
 } GameState;
+
+extern char playerNames[MAX_PLAYERS][32];
 
 typedef enum InGameState {
     IN_GAME_PLAYING = 0,
