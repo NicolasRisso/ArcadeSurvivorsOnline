@@ -63,6 +63,21 @@
 #define RELIC_LEVELUP_LIFESTEAL 0.01f
 
 //~ Begin of Enums
+typedef enum MusicType {
+    MUSIC_UNDEFINED = 0,
+    MUSIC_INGAME = 1
+} MusicType;
+
+typedef enum SoundType {
+    SOUND_UNDEFINED = 0,
+    SOUND_DAMAGE = 1,
+    SOUND_EXPLOSION = 2,
+    SOUND_LEVELUP = 3,
+    SOUND_PLAYER_DAMAGE = 4,
+    SOUND_XP_GAIN = 5,
+    SOUND_COUNT = 6
+} SoundType;
+
 typedef enum GameState {
     STATE_MAIN_MENU = 0,
     STATE_JOIN_IP = 1,
@@ -321,6 +336,15 @@ typedef struct Assets {
     Rectangle spriteRects[SPRITE_TYPE_COUNT]; // Source rects for each sprite cell
     SpriteRenderer entityRenderers[SPRITE_TYPE_COUNT]; // Enum-indexed renderer definitions
     
+    // Audio assets
+    Music musicTracks[2];
+    Sound soundTracks[SOUND_COUNT];
+    Sound damageAudioAliases[3];
+    Sound xpGainAudioAliases[3];
+    
+    // Silhouette shaders
+    Shader whiteShader;
+    
     bool loaded;
 } Assets;
 
@@ -366,6 +390,14 @@ void Assets_Load(void);
 void Assets_Unload(void);
 //~ End of Assets
 
+//~ Begin of Sound
+void Sound_Initialize(void);
+void Sound_Update(void);
+void Sound_PlayMusic(MusicType type);
+void Sound_StopMusic(void);
+void Sound_PlaySound(SoundType type);
+//~ End of Sound
+
 //~ Begin of Enemy
 u32 Enemy_GetAlternativeTargetPlayerID(u32 deadPlayerID, u32 enemyIndex);
 void Enemy_UpdateMovement(f32 deltaTime);
@@ -399,6 +431,7 @@ void Render_DrawXPBar(void);
 void Render_Entity(const Entity* entity);
 void Render_Map(void);
 void Render_Sprite(SpriteType spriteType, Vector2 position, f32 size, bool flipX, f32 animTime);
+void Render_SpriteTinted(SpriteType spriteType, Vector2 position, f32 size, bool flipX, f32 animTime, Color tint);
 void Render_SpawnDamagePopup(Vector2 position, f32 damage, Color color);
 void Render_UpdateAndDrawMenuParticles(f32 deltaTime);
 //~ End of Renderer

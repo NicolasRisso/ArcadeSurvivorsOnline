@@ -29,6 +29,7 @@ GlobalVariables globalVariables = {
 // --- Main Entry Point ---
 int main(void) {
     InitWindow(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Arcade Survivors Online");
+    InitAudioDevice();
     Assets_Load();
 
     // Initialize player weapons and relics - Start with 1 random weapon
@@ -57,6 +58,7 @@ int main(void) {
             Network_UpdateConnection(&globalVariables.currentConnectionState);
         }
         Input_Update(&globalVariables.currentInputState);
+        Sound_Update();
 
         f32 deltaTime = GetFrameTime();
         Vector2 mousePos = GetMousePosition();
@@ -158,11 +160,13 @@ int main(void) {
                             globalVariables.playerXP += entity->xpCrystal.xpValue * attr->xpGained;
                             if (globalVariables.playerXP >= globalVariables.xpToNextLevel) {
                                 globalVariables.playerLevel++;
+                                Sound_PlaySound(SOUND_LEVELUP);
                                 globalVariables.playerXP -= globalVariables.xpToNextLevel;
                                 globalVariables.xpToNextLevel *= 1.2f; // Increase difficulty
                                 globalVariables.pendingLevels++;
                             }
                             Network_SendXPCollect(&globalVariables.currentConnectionState, entityIndex);
+                            Sound_PlaySound(SOUND_XP_GAIN);
                             entity->entityType = ENTITY_UNDEFINED; // Remove locally immediately
                         }
                     }
@@ -480,6 +484,7 @@ int main(void) {
 
     Network_CloseConnection();
     Assets_Unload();
+    CloseAudioDevice();
     CloseWindow();
     return 0;
 }
@@ -622,12 +627,61 @@ void Assets_Load(void) {
         .staticSprite = { .spriteIndex = SPRITE_BOMB }
     };
     //~ End Sprite Atlas
+    
+    //~ Begin Audio Loading
+    globalVariables.assets.musicTracks[MUSIC_INGAME] = LoadMusicStream("assets/music/CombatMusic.ogg");
+    
+    globalVariables.assets.soundTracks[SOUND_DAMAGE] = LoadSound("assets/sounds/DamageAudio.mp3");
+    globalVariables.assets.soundTracks[SOUND_EXPLOSION] = LoadSound("assets/sounds/ExplosionAudio.ogg");
+    globalVariables.assets.soundTracks[SOUND_LEVELUP] = LoadSound("assets/sounds/LevelUpAudio.ogg");
+    globalVariables.assets.soundTracks[SOUND_PLAYER_DAMAGE] = LoadSound("assets/sounds/PlayerDamageAudio.ogg");
+    globalVariables.assets.soundTracks[SOUND_XP_GAIN] = LoadSound("assets/sounds/XpGainAudio.ogg");
+    
+    // Set up aliases for capped multi-play sounds
+    for (u8 i = 0; i < 3; i++) {
+        globalVariables.assets.damageAudioAliases[i] = LoadSoundAlias(globalVariables.assets.soundTracks[SOUND_DAMAGE]);
+        globalVariables.assets.xpGainAudioAliases[i] = LoadSoundAlias(globalVariables.assets.soundTracks[SOUND_XP_GAIN]);
+    }
+    //~ End Audio Loading
+    
+    // Silhouette white flash shader (paints all sprite RGB pure white, retains sprite alpha)
+    const char* fragmentShaderCode =
+        "#version 330\n"
+        "in vec2 fragTexCoord;\n"
+        "in vec4 fragColor;\n"
+        "out vec4 finalColor;\n"
+        "uniform sampler2D texture0;\n"
+        "uniform vec4 colDiffuse;\n"
+        "void main() {\n"
+        "    vec4 texel = texture(texture0, fragTexCoord);\n"
+        "    finalColor = vec4(1.0, 1.0, 1.0, texel.a * fragColor.a);\n"
+        "}\n";
+        
+    globalVariables.assets.whiteShader = LoadShaderFromMemory(NULL, fragmentShaderCode);
 }
 
 void Assets_Unload(void) {
     if (globalVariables.assets.loaded) {
         UnloadTexture(globalVariables.assets.logoAtlas);
         UnloadTexture(globalVariables.assets.spriteAtlas);
+        
+        //~ Begin Audio Unloading
+        UnloadMusicStream(globalVariables.assets.musicTracks[MUSIC_INGAME]);
+        
+        // Unload sound aliases first
+        for (u8 i = 0; i < 3; i++) {
+            UnloadSoundAlias(globalVariables.assets.damageAudioAliases[i]);
+            UnloadSoundAlias(globalVariables.assets.xpGainAudioAliases[i]);
+        }
+        
+        // Unload base sounds (SOUND_UNDEFINED is 0)
+        for (u8 i = 1; i < SOUND_COUNT; i++) {
+            UnloadSound(globalVariables.assets.soundTracks[i]);
+        }
+        //~ End Audio Unloading
+        
+        UnloadShader(globalVariables.assets.whiteShader);
+        
         globalVariables.assets.loaded = false;
     }
 }
@@ -1012,6 +1066,7 @@ void Player_UpdateMovement(f32 deltaTime) {
                     globalVariables.currentConnectionState.health -= predictedDamage;
                     globalVariables.currentConnectionState.iframeTimer = 0.5f;
                     globalVariables.currentConnectionState.damageFlashTimer = 0.5f;
+                    Sound_PlaySound(SOUND_PLAYER_DAMAGE);
                     
                     Network_SendDamage(&globalVariables.currentConnectionState, globalVariables.currentConnectionState.localPlayerIdentification, predictedDamage, WEAPON_UNDEFINED);
                     break;
@@ -1068,6 +1123,36 @@ void Render_Sprite(SpriteType spriteType, Vector2 position, f32 size, bool flipX
     };
     
     DrawTexturePro(globalVariables.assets.spriteAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+}
+
+void Render_SpriteTinted(SpriteType spriteType, Vector2 position, f32 size, bool flipX, f32 animTime, Color tint) {
+    if (!globalVariables.assets.loaded || spriteType >= SPRITE_TYPE_COUNT) return;
+    if (globalVariables.assets.spriteAtlas.id == 0) return;
+    
+    SpriteRenderer* renderer = &globalVariables.assets.entityRenderers[spriteType];
+    SpriteType frameIndex = spriteType;
+    
+    if (renderer->type == RENDERER_ANIMATED_SPRITE &&
+        renderer->animatedSprite.frameCount > 0 && animTime > 0.0f) {
+        f32 totalDuration = renderer->animatedSprite.frameDuration * (f32)renderer->animatedSprite.frameCount;
+        f32 t = fmodf(animTime, totalDuration);
+        u8 frame = (u8)(t / renderer->animatedSprite.frameDuration);
+        if (frame >= renderer->animatedSprite.frameCount) frame = 0;
+        frameIndex = renderer->animatedSprite.frames[frame];
+    }
+    
+    Rectangle src = globalVariables.assets.spriteRects[frameIndex];
+    if (flipX) src.width = -128.0f;
+    
+    f32 drawSize = (size > 0.0f) ? size : renderer->drawSize;
+    Rectangle dest = {
+        position.x - drawSize / 2.0f,
+        position.y - drawSize / 2.0f,
+        drawSize,
+        drawSize
+    };
+    
+    DrawTexturePro(globalVariables.assets.spriteAtlas, src, dest, (Vector2){ 0, 0 }, 0.0f, tint);
 }
 
 bool Render_DrawCustomButton(Rectangle rect, const char* text, Color baseColor, Color hoverColor, Vector2 mousePos, f32 deltaTime, f32* animProgress) {
@@ -1907,7 +1992,17 @@ void Render_Entity(const Entity* entity) {
                     f32 t = entity->character.damageFlashTimer / 0.15f;
                     f32 flashAlpha = sinf(t * 3.14159265f);
                     if (flashAlpha > 0.0f) {
-                        DrawCircleV(entity->character.position, radius, Fade(WHITE, flashAlpha));
+                        if (spritesAvailable) {
+                            SpriteType sprite = ENEMY_CLASS_TO_SPRITE[entity->character.enemyClass];
+                            f32 drawSize = globalVariables.assets.entityRenderers[sprite].drawSize;
+                            bool flipX = (entity->character.velocity.x < 0.0f);
+                            
+                            BeginShaderMode(globalVariables.assets.whiteShader);
+                            Render_SpriteTinted(sprite, entity->character.position, drawSize, flipX, 0.0f, Fade(WHITE, flashAlpha));
+                            EndShaderMode();
+                        } else {
+                            DrawCircleV(entity->character.position, radius, Fade(WHITE, flashAlpha));
+                        }
                     }
                 }
             }
@@ -1982,6 +2077,7 @@ void Render_Map(void) {
 }
 
 void Render_SpawnDamagePopup(Vector2 position, f32 damage, Color color) {
+    Sound_PlaySound(SOUND_DAMAGE);
     for (u16 i = 0; i < 256; i++) {
         if (globalVariables.currentConnectionState.localDamagePopups[i].entityType == ENTITY_UNDEFINED) {
             f32 offsetX = (f32)(rand() % 31 - 15);
@@ -2276,6 +2372,7 @@ void Weapon_ProjectileUpdateMovement(f32 deltaTime) {
                                     globalVariables.currentConnectionState.localVisualEffects[v].position = proj->position;
                                     globalVariables.currentConnectionState.localVisualEffects[v].radius = explosionRadius;
                                     globalVariables.currentConnectionState.localVisualEffects[v].lifetime = 0.5f;
+                                    Sound_PlaySound(SOUND_EXPLOSION);
                                     break;
                                 }
                             }
@@ -2336,6 +2433,7 @@ void Weapon_ProjectileUpdateMovement(f32 deltaTime) {
                             globalVariables.currentConnectionState.localVisualEffects[v].position = proj->position;
                             globalVariables.currentConnectionState.localVisualEffects[v].radius = bombRadius;
                             globalVariables.currentConnectionState.localVisualEffects[v].lifetime = 0.5f;
+                            Sound_PlaySound(SOUND_EXPLOSION);
                             break;
                         }
                     }
@@ -2471,3 +2569,115 @@ void Weapons_Update(f32 deltaTime) {
 }
 
 //~ End of Weapons
+
+//~ Begin of Sound
+
+void Sound_Initialize(void) {
+    // Already handled in main() and Assets_Load()
+}
+
+void Sound_Update(void) {
+    if (globalVariables.assets.loaded) {
+        if (globalVariables.currentGameState == STATE_IN_GAME) {
+            Music bgm = globalVariables.assets.musicTracks[MUSIC_INGAME];
+            if (bgm.ctxData != NULL) {
+                if (!IsMusicStreamPlaying(bgm)) {
+                    PlayMusicStream(bgm);
+                }
+                SetMusicVolume(bgm, 0.45f);
+                UpdateMusicStream(bgm);
+            }
+        } else {
+            Music bgm = globalVariables.assets.musicTracks[MUSIC_INGAME];
+            if (bgm.ctxData != NULL && IsMusicStreamPlaying(bgm)) {
+                StopMusicStream(bgm);
+            }
+        }
+    }
+}
+
+void Sound_PlayMusic(MusicType type) {
+    if (!globalVariables.assets.loaded) return;
+    if (type == MUSIC_INGAME) {
+        Music bgm = globalVariables.assets.musicTracks[MUSIC_INGAME];
+        if (bgm.ctxData != NULL) {
+            SetMusicVolume(bgm, 0.45f);
+            PlayMusicStream(bgm);
+        }
+    }
+}
+
+void Sound_StopMusic(void) {
+    if (!globalVariables.assets.loaded) return;
+    Music bgm = globalVariables.assets.musicTracks[MUSIC_INGAME];
+    if (bgm.ctxData != NULL && IsMusicStreamPlaying(bgm)) {
+        StopMusicStream(bgm);
+    }
+}
+
+// Global counters for aliases to cycle through
+static u8 nextDamageAlias = 0;
+static u8 nextXpAlias = 0;
+
+void Sound_PlaySound(SoundType type) {
+    if (!globalVariables.assets.loaded) return;
+    
+    // Generate a random pitch modulator +- 5%
+    f32 pitchMod = 1.0f + (((float)rand() / (float)RAND_MAX) * 0.10f - 0.05f);
+    
+    switch (type) {
+        case SOUND_DAMAGE: {
+            u8 startIdx = nextDamageAlias;
+            u8 chosenIdx = startIdx;
+            for (u8 i = 0; i < 3; i++) {
+                u8 idx = (startIdx + i) % 3;
+                if (!IsSoundPlaying(globalVariables.assets.damageAudioAliases[idx])) {
+                    chosenIdx = idx;
+                    break;
+                }
+            }
+            Sound snd = globalVariables.assets.damageAudioAliases[chosenIdx];
+            SetSoundPitch(snd, pitchMod);
+            PlaySound(snd);
+            nextDamageAlias = (chosenIdx + 1) % 3;
+            break;
+        }
+        case SOUND_EXPLOSION: {
+            Sound snd = globalVariables.assets.soundTracks[SOUND_EXPLOSION];
+            PlaySound(snd);
+            break;
+        }
+        case SOUND_LEVELUP: {
+            Sound snd = globalVariables.assets.soundTracks[SOUND_LEVELUP];
+            SetSoundPitch(snd, pitchMod);
+            PlaySound(snd);
+            break;
+        }
+        case SOUND_PLAYER_DAMAGE: {
+            Sound snd = globalVariables.assets.soundTracks[SOUND_PLAYER_DAMAGE];
+            SetSoundPitch(snd, pitchMod);
+            PlaySound(snd);
+            break;
+        }
+        case SOUND_XP_GAIN: {
+            u8 startIdx = nextXpAlias;
+            u8 chosenIdx = startIdx;
+            for (u8 i = 0; i < 3; i++) {
+                u8 idx = (startIdx + i) % 3;
+                if (!IsSoundPlaying(globalVariables.assets.xpGainAudioAliases[idx])) {
+                    chosenIdx = idx;
+                    break;
+                }
+            }
+            Sound snd = globalVariables.assets.xpGainAudioAliases[chosenIdx];
+            SetSoundPitch(snd, pitchMod);
+            PlaySound(snd);
+            nextXpAlias = (chosenIdx + 1) % 3;
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+//~ End of Sound
